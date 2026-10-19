@@ -1,0 +1,27 @@
+# Optional paid alternative. Not selected by the default render.yaml.
+services:
+  - type: web
+    name: nest-ipad-pilot
+    runtime: node
+    plan: starter
+    numInstances: 1
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    disk:
+      name: nest-library
+      mountPath: /var/data/nest
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATA_DIR
+        value: /var/data/nest
+      - key: REQUIRE_SITE_ACCESS
+        value: "true"
+      - key: SITE_ACCESS_PIN
+        sync: false
+      - key: SESSION_COOKIE_SECURE
+        value: "true"
+      - key: TRUST_PROXY
+        value: "1"

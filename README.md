@@ -1,0 +1,34 @@
+# Nest: family library and iPad feasibility pilot
+
+The default page is a parent-assisted iPad streaming experiment: prepare one approved title, use Netflix's own player with manually enabled Guided Access, then record observed behavior. It does not provide a locked Netflix player or automatic return to the library. Start with the [iPad test guide](docs/IPAD-TEST.md) before handing a device to a child.
+
+To open the app on an iPad using an internet address, follow the [public hosting guide](docs/PUBLIC-HOSTING.md). The default Render Blueprint requests a free HTTPS trial with a website access PIN and temporary storage. Free-plan availability depends on the hosting account and Render's current rules; review the dashboard before deploying. The service may sleep, and all server-side library data and the parent PIN can reset. Reports stay in Safari's storage; export a copy. An optional paid persistent configuration is included separately for later. The files alone do not deploy a website. Your GitHub repository can remain private.
+
+## Run locally
+
+Use Node.js 24 and npm. From this checkout:
+
+```sh
+npm ci
+npm run build
+npm test
+npm start
+```
+
+The built app listens on port **3001**. For development, `npm run dev` starts the API on **3001** and Vite on **5173**. Use `npm run build` after changing the client before running `npm start`.
+
+To open it on an iPad, the server must be reachable from that iPad. On your own computer, connect both devices to the same trusted network and use the computer's local network address with port 3001 (or 5173 for development). For a cloud workspace, use a securely hosted or authenticated preview URL that the iPad can reach. A cloud container's private address and a `localhost` link are not iPad preview URLs. Configure hosting separately; running these commands does not publish the app.
+
+## Data and parent controls
+
+The prototype uses one shared family library on one server. The existing library supports a 6–12 digit parent PIN, with server-side authentication for parent actions. First-time PIN creation claims the shared library; do this yourself before giving others access. Keep the PIN private and return to child mode after editing. There is no email PIN recovery.
+
+Library data, PIN credentials, and uploaded media persist under `.data/` by default; `DATA_DIR` can select another writable directory. Keep this directory private and back it up if the data matters. Restarting the server may require signing in again. The parent PIN protects library changes; it does not lock Safari, Netflix, or the iPad. Use a trusted household network or an appropriately secured host.
+
+Public hosting must also require a separate **website access PIN**. The Render configuration sets `REQUIRE_SITE_ACCESS=true` and asks you to set `SITE_ACCESS_PIN` securely to 8–12 digits. The server refuses to start if this required PIN is missing or invalid. It protects library APIs and uploaded media before a visitor signs in; the app shell and health/access-status endpoints remain available. HTTPS hosting uses secure cookies. Do not commit PIN values or store them in URLs. This access gate does not provide Netflix/device restrictions.
+
+The earlier library prototype retains parent references to streaming services and supports approved uploaded files. It does not turn streaming links into child-contained playback. AI discovery, live subscription/rental comparisons, catalog licensing, automatic metadata enrichment, and native device controls are deferred.
+
+## Validation
+
+`npm test` checks server behavior; `npm run build` checks TypeScript and creates the browser build. Physical iPad tests in [docs/IPAD-TEST.md](docs/IPAD-TEST.md) are still required. Record **not tested** whenever there is no device evidence. In particular, a passing web test does not validate Netflix autoplay settings, Guided Access restrictions, playback end detection, or automatic return.

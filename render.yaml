@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: nest-ipad-pilot
+    runtime: node
+    plan: free
+    numInstances: 1
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATA_DIR
+        value: .data
+      - key: REQUIRE_SITE_ACCESS
+        value: "true"
+      - key: SITE_ACCESS_PIN
+        sync: false
+      - key: SESSION_COOKIE_SECURE
+        value: "true"
+      - key: TRUST_PROXY
+        value: "1"
