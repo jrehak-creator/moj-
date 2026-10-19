@@ -9,7 +9,7 @@
     "dev:server": "node --watch server/index.mjs",
     "build": "tsc -b && vite build",
     "start": "node server/index.mjs",
-    "test": "node --test server/*.test.mjs scripts/*.test.mjs"
+    "test": "node --test server/*.test.mjs scripts/*.test.mjs src/*.test.mjs"
   },
   "dependencies": {
     "express": "^5.1.0",

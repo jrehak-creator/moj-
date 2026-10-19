@@ -1,6 +1,8 @@
 # iPad playback experiment
 
-This is a parent-assisted feasibility test, not a validated child-safe streaming player. The Safari pilot helps prepare one title and record what happens. Netflix handles playback; the link may open its app or a Safari page, which the parent must check. A parent starts and ends Guided Access manually.
+The user also reported that opening a Netflix title from Nest and then running their locking Shortcut afterward successfully activated the restriction. Keep this two-step method available. Automatic per-title Shortcut invocation, readiness timing, and automatic episode completion remain separate, unverified behaviors.
+
+This is a parent-assisted feasibility test, not a validated child-safe streaming player. The Safari pilot helps prepare one title and record what happens. Netflix handles playback; the link may open its app or a Safari page, which the parent must check. The baseline uses manual Guided Access activation and exit. A separate [named Shortcut experiment](IPAD-SHORTCUT.md) tests starting the lock through an explicit parent action in Nest.
 
 The question is: **with touch disabled, can this particular iPad play the selected title without navigating to, or automatically starting, other content?** Record failures as well as successes. A pass applies only to the tested device, app version, profile, and title.
 
@@ -25,6 +27,12 @@ The question is: **with touch disabled, can this particular iPad play the select
 
 Guided Access may have a **Time Limit** option. Test a short limit in a separate supervised session and record what the iPad actually does. A session limit or device lock is not evidence that playback stopped, that Netflix closed, or that Safari reopened.
 
+## Optional: start the lock through a Shortcut
+
+Follow [the iPad Shortcut guide](IPAD-SHORTCUT.md) to create a regular **Nest Playback** Shortcut and invoke it explicitly from Nest for each title. This tests a different path from a Netflix **App Is Opened** personal automation. The user reported that the app-opened trigger did not work when Netflix was already open or launched through Nest in Safari.
+
+Keep the parent present and test Netflix closed, Netflix already open, and a second selected title separately. A delay before **Start Guided Access** is preparation time, not confirmation that the correct episode is playing. The parent still ends Guided Access and returns to Nest manually. Do not assume that this experiment supports automatic intro skipping or end-of-episode return.
+
 ## Test interruptions separately
 
 Repeat on the same title/profile and record results for each case:
@@ -43,7 +51,7 @@ Do not interrupt a child's session just to provoke errors; conduct these checks 
 
 It can store the approved-title plan, hand off a link, show a preparation checklist, and save parent-entered observations. Opening a provider link may open Safari or the installed app; check the actual behavior on the iPad. The parent remains responsible for selecting and starting the exact episode.
 
-A normal Safari page cannot enable or end Guided Access, lock another app's touch controls, inspect Netflix playback progress, supply controls above its protected video, detect the exact end of a movie, or force a return from Netflix. A foreground web reminder is only a reminder while the page remains active. It is not a playback timer or a reliable background alarm; pauses, ads, buffering, and iPad suspension invalidate timing assumptions.
+A normal Safari page cannot directly enable or end Guided Access, lock another app's touch controls, inspect Netflix playback progress, supply controls above its protected video, detect the exact end of a movie, or force a return from Netflix. The experimental handoff can ask iPadOS to run a separately installed Shortcut; the device runs its actions, and the website cannot verify the outcome. A foreground web reminder is only a reminder while the page remains active. It is not a playback timer or a reliable background alarm; pauses, ads, buffering, and iPad suspension invalidate timing assumptions.
 
 Official Netflix downloads are an optional second experiment: download the approved title **inside Netflix**, confirm it plays offline, disconnect the iPad from the network, then repeat these checks. Downloads stay in the provider app; this pilot does not extract, copy, or rehost them. Offline use alone does not establish that only one title is accessible.
 
@@ -51,4 +59,6 @@ Official Netflix downloads are an optional second experiment: download the appro
 
 For each check, choose **observed pass**, **observed failure**, or **not tested**, and add a short note. Include iPad model, iPadOS version, Netflix version, profile, title/episode, autoplay settings, network state, and date. Do not store passwords or passcodes in notes.
 
-No Netflix/iPad behavior is validated merely because the website builds or its automated tests pass. Until this physical-device experiment is completed, touch restriction, end-of-title behavior, provider handoff, and manual return remain **not tested**. Even a successful session does not establish an unattended or automatic solution across providers.
+No Netflix/iPad behavior is validated merely because the website builds or its automated tests pass. In the conversation, the user reported that the selected video played **in the Netflix app** and that manual Guided Access worked. The iPad model, iPadOS version, Netflix version, precise restrictions tested, and end-of-title result were not recorded. Treat this as a user-reported partial result, not completion of the checklist above.
+
+The explicit named-Shortcut handoff, automatic lock activation from that handoff, all navigation escape checks, autoplay/end-of-title behavior, and automatic return remain **not verified** on the physical iPad. Even a successful session does not establish an unattended or automatic solution across providers.

@@ -2,6 +2,8 @@
 
 The default page is a parent-assisted iPad streaming experiment: prepare one approved title, use Netflix's own player with manually enabled Guided Access, then record observed behavior. It does not provide a locked Netflix player or automatic return to the library. Start with the [iPad test guide](docs/IPAD-TEST.md) before handing a device to a child.
 
+The optional [iPad Shortcut experiment](docs/IPAD-SHORTCUT.md) explicitly passes the selected Netflix URL to a named, user-installed Shortcut on each launch. It tests an Open URLs → Wait → Start Guided Access sequence, alongside the working two-step fallback. The website cannot verify that Netflix is ready or that the lock started; actual ending detection and automatic return remain unsupported.
+
 To open the app on an iPad using an internet address, follow the [public hosting guide](docs/PUBLIC-HOSTING.md). The default Render Blueprint requests a free HTTPS trial with a website access PIN and temporary storage. Free-plan availability depends on the hosting account and Render's current rules; review the dashboard before deploying. The service may sleep, and all server-side library data and the parent PIN can reset. Reports stay in Safari's storage; export a copy. An optional paid persistent configuration is included separately for later. The files alone do not deploy a website. Your GitHub repository can remain private.
 
 ## Run locally
