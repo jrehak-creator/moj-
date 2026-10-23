@@ -1,4 +1,8 @@
-# Nest: family library and iPad feasibility pilot
+# Nest: family video discovery and library
+
+Nest brings parent search and saved video links into one shared family library. Open **`/discover`** for **Ask Nest**, a natural-language search across selected public pages from YouTube, Netflix, Disney+, Prime Video, and HBO Max, or **Add a link** to inspect and save a title. Czechia is the default search country. Follow the [parent discovery guide](docs/PARENT-DISCOVERY.md) to enable AI search with an optional server-side OpenAI API key.
+
+Search results include supporting source links. They do not establish Czech catalog availability, access through your subscription, or current prices. Selecting a service chooses where to search; it does not connect your streaming account. Saved streaming links remain parent-only references. **`/library`** plays approved uploaded videos in child view.
 
 The default page is a parent-assisted iPad streaming experiment: prepare one approved title, use Netflix's own player with manually enabled Guided Access, then record observed behavior. It does not provide a locked Netflix player or automatic return to the library. Start with the [iPad test guide](docs/IPAD-TEST.md) before handing a device to a child.
 
@@ -29,8 +33,10 @@ Library data, PIN credentials, and uploaded media persist under `.data/` by defa
 
 Public hosting must also require a separate **website access PIN**. The Render configuration sets `REQUIRE_SITE_ACCESS=true` and asks you to set `SITE_ACCESS_PIN` securely to 8–12 digits. The server refuses to start if this required PIN is missing or invalid. It protects library APIs and uploaded media before a visitor signs in; the app shell and health/access-status endpoints remain available. HTTPS hosting uses secure cookies. Do not commit PIN values or store them in URLs. This access gate does not provide Netflix/device restrictions.
 
-The earlier library prototype retains parent references to streaming services and supports approved uploaded files. It does not turn streaming links into child-contained playback. AI discovery, live subscription/rental comparisons, catalog licensing, automatic metadata enrichment, and native device controls are deferred.
+The link adapters recognize and normalize supported title links from all five services. YouTube public metadata can supply a title, creator, and thumbnail; other services currently need manual details. Runtime stays unknown unless entered manually. Link recognition and AI discovery do not provide playback control or turn streaming links into child-contained playback. Verified catalog availability, subscription/rental comparisons, richer metadata, and native device controls remain future work.
 
 ## Validation
 
 `npm test` checks server behavior; `npm run build` checks TypeScript and creates the browser build. Physical iPad tests in [docs/IPAD-TEST.md](docs/IPAD-TEST.md) are still required. Record **not tested** whenever there is no device evidence. In particular, a passing web test does not validate Netflix autoplay settings, Guided Access restrictions, playback end detection, or automatic return.
+
+AI discovery tests use mocked provider responses. Live OpenAI search requires your own API key and has not been verified by those tests.

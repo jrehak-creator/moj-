@@ -1,4 +1,4 @@
-export type Source = 'youtube' | 'netflix' | 'disney' | 'upload';
+export type Source = 'youtube' | 'netflix' | 'disney' | 'prime' | 'max' | 'upload';
 export type Collection = 'Nature & animals' | 'Curious minds' | 'Stories & imagination' | 'Music & movement';
 export interface Video {
   id: string;

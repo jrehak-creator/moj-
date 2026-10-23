@@ -83,8 +83,8 @@ test('first PIN setup replaces illustrative samples and stores a hashed PIN', as
 test('parent sessions protect changes and are invalidated by logout', async t => {
   const f = await fixture(t);
   await f.setup();
-  for (const [path, method] of [['/api/videos', 'POST'], ['/api/videos/not-real', 'PATCH'], ['/api/videos/not-real', 'DELETE'], ['/api/metadata', 'POST'], ['/api/uploads', 'POST']]) {
-    assert.equal((await f.request(path, { method, body: {} })).status, 401);
+  for (const [path, method] of [['/api/videos', 'POST'], ['/api/videos/not-real', 'PATCH'], ['/api/videos/not-real', 'DELETE'], ['/api/metadata', 'POST'], ['/api/uploads', 'POST'], ['/api/discovery/config', 'GET'], ['/api/discovery/search', 'POST'], ['/api/links/analyze', 'POST']]) {
+    assert.equal((await f.request(path, { method, ...(method === 'GET' ? {} : { body: {} }) })).status, 401);
   }
   assert.equal((await f.request('/api/metadata', { method: 'POST', parent: true, body: { url: 'https://www.netflix.com/title/80049832' } })).status, 200);
   assert.equal((await f.request('/api/auth/logout', { method: 'POST', parent: true })).status, 200);
@@ -264,7 +264,7 @@ test('a locked public site exposes only access status, health, and the applicati
   for (const [path, method] of [
     ['/api/library', 'GET'], ['/media/00000000-0000-0000-0000-000000000000.mp4', 'GET'],
     ['/api/auth/setup', 'POST'], ['/api/auth/login', 'POST'], ['/api/auth/logout', 'POST'],
-    ['/api/metadata', 'POST'], ['/api/uploads', 'POST'], ['/api/videos', 'POST'],
+    ['/api/metadata', 'POST'], ['/api/uploads', 'POST'], ['/api/discovery/config', 'GET'], ['/api/discovery/search', 'POST'], ['/api/links/analyze', 'POST'], ['/api/videos', 'POST'],
     ['/api/videos/not-real', 'PATCH'], ['/api/videos/not-real', 'DELETE'], ['/api/unknown', 'GET'],
   ]) {
     const result = await f.request(path, { method, ...(method !== 'GET' ? { body: { pin: '123456' } } : {}) });
@@ -272,7 +272,7 @@ test('a locked public site exposes only access status, health, and the applicati
     assert.deepEqual(Object.keys(result.body), ['error']);
     assert.equal(result.headers.get('cache-control'), 'no-store');
   }
-  for (const path of ['/', '/library']) {
+  for (const path of ['/', '/library', '/discover']) {
     const shell = await fetch(`${f.base}${path}`, { headers: { Accept: 'text/html' } });
     assert.equal(shell.status, 200);
     assert.equal(shell.headers.get('cache-control'), 'no-store');
@@ -372,4 +372,90 @@ test('forwarded protocol is ignored without explicit proxy trust and cookie secu
   const forced = await fixture(t, { siteAccessPin: '28756319', trustProxy: false, secureCookies: true });
   const login = await forced.unlockSite();
   assert.match(login.headers.get('set-cookie'), /; Secure;/);
+});
+
+
+test('discovery configuration and missing credentials remain parent-only without exposing secrets', async t => {
+  let calls = 0;
+  const f = await fixture(t, { discoveryApiKey: '', fetchImpl: async () => { calls += 1; throw new Error('Unexpected fetch'); } });
+  assert.equal((await f.request('/api/discovery/config')).status, 401);
+  await f.setup();
+  const config = await f.request('/api/discovery/config', { parent: true });
+  assert.equal(config.status, 200);
+  assert.equal(config.body.configured, false);
+  assert.equal(config.body.defaultCountry, 'CZ');
+  assert.deepEqual(config.body.services.map(service => service.id), ['youtube', 'netflix', 'disney', 'prime', 'max']);
+  const search = await f.request('/api/discovery/search', { method: 'POST', parent: true, body: { query: 'Gentle animal stories', country: 'CZ', services: ['netflix'] } });
+  assert.equal(search.status, 503);
+  assert.match(search.body.error, /NEST_AI_API_KEY/);
+  assert.equal(calls, 0);
+  const configured = await fixture(t, { discoveryApiKey: 'test-only-key-never-send-to-client' });
+  await configured.setup();
+  const available = await configured.request('/api/discovery/config', { parent: true });
+  assert.equal(available.body.configured, true);
+  assert.equal(JSON.stringify(available.body).includes('test-only-key'), false);
+});
+
+test('five provider link analyses save consistent parent references while children see none', async t => {
+  const f = await fixture(t, { discoveryApiKey: '' });
+  await f.setup();
+  for (const [source, url] of [
+    ['netflix', 'https://www.netflix.com/watch/81361080?trackId=284725014'],
+    ['disney', 'https://www.disneyplus.com/series/bluey/1xy9TAOQ0M3r'],
+    ['prime', 'https://www.primevideo.com/detail/0ABCDEF1234567'],
+    ['max', 'https://www.max.com/movies/example/12345678-1234-1234-1234-123456789abc'],
+  ]) {
+    const analysis = await f.request('/api/links/analyze', { method: 'POST', parent: true, body: { url } });
+    assert.equal(analysis.status, 200, url);
+    assert.equal(analysis.body.source, source);
+    assert.equal(analysis.body.metadata.durationSeconds, null);
+    assert.equal(analysis.body.integration.inAppPlaybackImplemented, false);
+    const saved = await f.request('/api/videos', { method: 'POST', parent: true, body: { url: analysis.body.url, title: `Reference from ${source}`, source } });
+    assert.equal(saved.status, 201, JSON.stringify(saved.body));
+    assert.equal(saved.body.video.approved, false);
+  }
+  assert.equal((await f.request('/api/library', { parent: true })).body.videos.length, 4);
+  assert.equal((await f.request('/api/library')).body.videos.length, 0);
+});
+
+test('AI search requests have a separate parent-only limit', async t => {
+  const f = await fixture(t, { discoveryApiKey: '' });
+  await f.setup();
+  const options = { method: 'POST', parent: true, body: { query: 'Find a short story', country: 'CZ', services: ['youtube'] } };
+  for (let i = 0; i < 15; i += 1) assert.equal((await f.request('/api/discovery/search', options)).status, 503);
+  const blocked = await f.request('/api/discovery/search', options);
+  assert.equal(blocked.status, 429);
+  assert.ok(Number(blocked.headers.get('retry-after')) > 0);
+  assert.equal((await f.request('/api/links/analyze', { method: 'POST', parent: true, body: { url: 'https://www.netflix.com/title/80049832' } })).status, 200);
+  assert.equal((await f.request('/api/auth/login', { method: 'POST', body: { pin: '123456' } })).status, 200);
+});
+
+
+test('grounded AI suggestions can be saved through the parent API and disappear after logout', async t => {
+  let calls = 0;
+  const url = 'https://www.netflix.com/title/80049832';
+  const f = await fixture(t, { discoveryApiKey: 'test-only-key', fetchImpl: async endpoint => {
+    calls += 1;
+    assert.equal(String(endpoint), 'https://api.openai.com/v1/responses');
+    return { ok: true, json: async () => ({ status: 'completed', output: [
+      { type: 'web_search_call', status: 'completed', action: { type: 'search', sources: [{ type: 'url', url }] } },
+      { type: 'message', content: [{ type: 'output_text', text: JSON.stringify({ summary: 'Test suggestion', results: [{ title: 'A nature suggestion', url, description: 'Test description', reason: 'A possible match for the request' }] }) }] },
+    ] }) };
+  } });
+  await f.setup();
+  const result = await f.request('/api/discovery/search', { method: 'POST', parent: true, body: { query: 'Nature suggestions for our family', services: ['netflix'], country: 'CZ' } });
+  assert.equal(result.status, 200);
+  assert.equal(calls, 1);
+  assert.equal(result.body.country, 'CZ');
+  assert.equal(result.body.results.length, 1);
+  const suggestion = result.body.results[0];
+  assert.equal(suggestion.availability, 'not-verified');
+  assert.equal(suggestion.price, null);
+  assert.equal(suggestion.durationSeconds, null);
+  const saved = await f.request('/api/videos', { method: 'POST', parent: true, body: { title: suggestion.title, url: suggestion.url, source: suggestion.source, description: suggestion.description, approved: false } });
+  assert.equal(saved.status, 201);
+  assert.equal((await f.request('/api/library', { parent: true })).body.videos.length, 1);
+  await f.request('/api/auth/logout', { method: 'POST', parent: true });
+  assert.equal((await f.request('/api/library', { parent: true })).body.videos.length, 0);
+  assert.equal((await f.request('/api/discovery/config', { parent: true })).status, 401);
 });

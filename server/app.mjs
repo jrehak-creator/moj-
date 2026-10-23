@@ -5,6 +5,10 @@ import { mkdir, readFile, writeFile, rename, unlink, open } from 'node:fs/promis
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import { normalizeVideoUrl, analyzeVideoLink } from './providers.mjs';
+import { createDiscoveryService, DiscoveryError } from './discovery.mjs';
+
+export { normalizeVideoUrl } from './providers.mjs';
 
 const scrypt = promisify(scryptCallback);
 const here = dirname(fileURLToPath(import.meta.url));
@@ -26,32 +30,6 @@ function textField(value, name, max, { required = false, fallback = '' } = {}) {
   const result = value.trim();
   if (result.length > max || (required && !result)) fail(`${name} must contain ${required ? '1–' : 'at most '}${max} characters.`);
   return result;
-}
-
-export function normalizeVideoUrl(input) {
-  if (typeof input !== 'string' || input.length > 2048) fail('Enter a supported video link.');
-  let parsed;
-  try { parsed = new URL(input); } catch { fail('Enter a valid video link.'); }
-  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.port) fail('Enter an HTTPS YouTube, Netflix, or Disney+ link.');
-  const host = parsed.hostname.toLowerCase();
-  if (['youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be'].includes(host)) {
-    let id;
-    if (host === 'youtu.be') id = parsed.pathname.slice(1);
-    else if (parsed.pathname === '/watch') id = parsed.searchParams.get('v');
-    else id = parsed.pathname.match(/^\/(?:shorts|embed)\/([^/]+)\/?$/)?.[1];
-    if (!id || !/^[A-Za-z0-9_-]{11}$/.test(id)) fail('Use a link to one YouTube video, rather than a channel or playlist.');
-    return { source: 'youtube', url: `https://www.youtube.com/watch?v=${id}` };
-  }
-  if (['netflix.com', 'www.netflix.com'].includes(host)) {
-    const match = parsed.pathname.match(/^\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?(title|watch)\/(\d{4,16})\/?$/i);
-    if (!match) fail('Use a Netflix title or watch link, such as netflix.com/watch/80049832.');
-    return { source: 'netflix', url: `https://www.netflix.com/${match[1].toLowerCase()}/${match[2]}` };
-  }
-  if (['disneyplus.com', 'www.disneyplus.com'].includes(host)) {
-    if (!/^\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?(?:series|movies|video|browse)\/.+/i.test(parsed.pathname)) fail('Use a Disney+ series, movie, or title link.');
-    return { source: 'disney', url: `https://www.disneyplus.com${parsed.pathname}` };
-  }
-  fail('Supported services are YouTube, Netflix, and Disney+.');
 }
 
 function thumbnailUrl(value) {
@@ -152,7 +130,10 @@ export async function createApp({
   publicOrigin = process.env.PUBLIC_ORIGIN || process.env.RENDER_EXTERNAL_URL,
   trustProxy = process.env.TRUST_PROXY === '1' ? 1 : false,
   secureCookies = process.env.SESSION_COOKIE_SECURE === 'true',
+  discoveryApiKey = process.env.NEST_AI_API_KEY || '',
+  discoveryModel = process.env.NEST_AI_MODEL || 'gpt-5-mini',
 } = {}) {
+  const discovery = createDiscoveryService({ apiKey: discoveryApiKey, model: discoveryModel, fetchImpl });
   const accessRequired = requireSiteAccess || siteAccessPin !== undefined;
   if (accessRequired && (typeof siteAccessPin !== 'string' || !/^\d{8,12}$/.test(siteAccessPin))) {
     throw new Error('Site access requires SITE_ACCESS_PIN to contain 8–12 digits. Configure it securely before starting the server.');
@@ -208,6 +189,7 @@ export async function createApp({
   const accessSessions = new Map();
   const loginAttempts = new Map();
   const accessAttempts = new Map();
+  const discoveryAttempts = new Map();
   app.use((req, res, next) => {
     res.set('X-Content-Type-Options', 'nosniff');
     res.set('Referrer-Policy', 'no-referrer');
@@ -250,13 +232,13 @@ export async function createApp({
     sessionMap.set(token, now + sessionAge);
     res.cookie(name, token, { ...cookieOptions(req), maxAge: sessionAge });
   }
-  function makeAttemptLimit(attemptMap, message) {
+  function makeAttemptLimit(attemptMap, message, limit = 8) {
     return (req, res, next) => {
       const now = Date.now();
       for (const [ip, entry] of attemptMap) if (entry.until < now) attemptMap.delete(ip);
       const key = req.ip;
       const attempts = attemptMap.get(key) ?? { count: 0, until: now + 15 * 60 * 1000 };
-      if (attempts.count >= 8) {
+      if (attempts.count >= limit) {
         res.set('Retry-After', String(Math.ceil((attempts.until - now) / 1000)));
         return res.status(429).json({ error: message });
       }
@@ -267,6 +249,7 @@ export async function createApp({
   }
   const attemptLimit = makeAttemptLimit(loginAttempts, 'Too many PIN attempts. Try again in 15 minutes.');
   const accessAttemptLimit = makeAttemptLimit(accessAttempts, 'Too many access PIN attempts. Try again in 15 minutes.');
+  const discoveryAttemptLimit = makeAttemptLimit(discoveryAttempts, 'Search limit reached. Try again in 15 minutes.', 15);
 
   app.get('/api/health', (_req, res) => res.json({ ok: true }));
   app.get('/api/access', (req, res) => res.json({ required: accessRequired, authenticated: req.hasSiteAccess }));
@@ -325,25 +308,20 @@ export async function createApp({
     res.json({ parent: false });
   });
 
+  app.get('/api/discovery/config', parentOnly, (_req, res) => res.json(discovery.config()));
+  app.post('/api/discovery/search', parentOnly, discoveryAttemptLimit, async (req, res) => {
+    res.json(await discovery.search(req.body ?? {}));
+  });
+  app.post('/api/links/analyze', parentOnly, async (req, res) => {
+    res.json(await analyzeVideoLink(req.body?.url, { fetchImpl }));
+  });
+  // Keep the original editor endpoint compatible with the shared provider adapters.
   app.post('/api/metadata', parentOnly, async (req, res) => {
-    const identity = normalizeVideoUrl(req.body?.url);
-    const metadata = { ...identity, title: '', description: '', creator: '', thumbnail: '', duration: null };
-    if (identity.source !== 'youtube') return res.json({ ...metadata, warning: 'This service does not provide public title metadata here. Add the details manually. Saved service links are parent references and cannot be played in the child library.' });
-    try {
-      const endpoint = new URL('https://www.youtube.com/oembed');
-      endpoint.searchParams.set('url', identity.url);
-      endpoint.searchParams.set('format', 'json');
-      const response = await fetchImpl(endpoint, { signal: AbortSignal.timeout(6000), redirect: 'error' });
-      if (!response.ok) throw new Error('Metadata unavailable');
-      const details = await response.json();
-      metadata.title = textField(details.title, 'Title', 200);
-      metadata.creator = textField(details.author_name, 'Creator', 160);
-      metadata.thumbnail = thumbnailUrl(details.thumbnail_url);
-      metadata.warning = 'Title and thumbnail were imported from YouTube. Add duration and age guidance manually. This saved link is a parent reference; upload a video you have permission to use for child playback.';
-    } catch {
-      metadata.warning = 'Video details could not be imported. You can add them manually. Service links are saved as parent references.';
-    }
-    res.json(metadata);
+    const result = await analyzeVideoLink(req.body?.url, { fetchImpl });
+    const details = result.metadata;
+    res.json({ source: result.source, url: result.url, title: details.title,
+      description: details.description, creator: details.creator, thumbnail: details.thumbnail,
+      duration: details.durationSeconds, warning: result.warnings.join(' ') });
   });
 
   app.post('/api/videos', parentOnly, async (req, res) => {
@@ -428,6 +406,7 @@ export async function createApp({
     }
     if (error.type === 'entity.parse.failed') return res.status(400).json({ error: 'The request must contain valid JSON.' });
     if (error.type === 'entity.too.large') return res.status(413).json({ error: 'The request is too large.' });
+    if (error instanceof DiscoveryError) return res.status(error.status).json({ error: error.message });
     const status = error.status >= 400 && error.status < 500 ? error.status : 500;
     if (status === 500) console.error('Library operation failed:', error.message);
     res.status(status).json({ error: status === 500 ? 'The library could not save this change. Please try again.' : error.message });
