@@ -10,7 +10,7 @@ async function fixture(t, options = {}) {
   const distDir = join(dataDir, 'test-shell');
   await mkdir(distDir);
   await writeFile(join(distDir, 'index.html'), '<!doctype html><main>Test shell</main>');
-  const app = await createApp({ dataDir, distDir, ...options });
+  const app = await createApp({ dataDir, distDir, durationService: { resolve: async () => null }, thumbnailService: { resolve: async () => ({ thumbnail: '', artwork: 'forest' }) }, ...options });
   const server = app.listen(0, '127.0.0.1');
   await new Promise(resolve => server.once('listening', resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -83,7 +83,7 @@ test('first PIN setup replaces illustrative samples and stores a hashed PIN', as
 test('parent sessions protect changes and are invalidated by logout', async t => {
   const f = await fixture(t);
   await f.setup();
-  for (const [path, method] of [['/api/videos', 'POST'], ['/api/videos/not-real', 'PATCH'], ['/api/videos/not-real', 'DELETE'], ['/api/metadata', 'POST'], ['/api/uploads', 'POST'], ['/api/discovery/config', 'GET'], ['/api/discovery/search', 'POST'], ['/api/links/analyze', 'POST']]) {
+  for (const [path, method] of [['/api/videos', 'POST'], ['/api/videos/not-real', 'PATCH'], ['/api/videos/not-real', 'DELETE'], ['/api/metadata', 'POST'], ['/api/uploads', 'POST'], ['/api/discovery/config', 'GET'], ['/api/discovery/search', 'POST'], ['/api/links/analyze', 'POST'], ['/api/library/thumbnails', 'POST']]) {
     assert.equal((await f.request(path, { method, ...(method === 'GET' ? {} : { body: {} }) })).status, 401);
   }
   assert.equal((await f.request('/api/metadata', { method: 'POST', parent: true, body: { url: 'https://www.netflix.com/title/80049832' } })).status, 200);
@@ -91,16 +91,17 @@ test('parent sessions protect changes and are invalidated by logout', async t =>
   assert.equal((await f.request('/api/library', { parent: true })).body.parent, false);
 });
 
-test('external references persist for parents and never enter the child library', async t => {
+test('streaming selections publish by default and explicit drafts remain private after restart', async t => {
   const f = await fixture(t);
   await f.setup();
   const added = await f.request('/api/videos', { method: 'POST', parent: true, body: { title: 'Moon reference', url: 'https://youtu.be/nr5Pj6GQL2o', collection: 'Curious minds', tags: ['Space'] } });
   assert.equal(added.status, 201);
   assert.equal(added.body.video.source, 'youtube');
-  assert.equal(added.body.video.approved, false);
-  assert.equal((await f.request('/api/library')).body.videos.length, 0);
+  assert.equal(added.body.video.approved, true);
+  assert.equal((await f.request('/api/library')).body.videos.length, 1);
   assert.equal((await f.request('/api/library', { parent: true })).body.videos.length, 1);
-  assert.equal((await f.request(`/api/videos/${added.body.video.id}`, { method: 'PATCH', parent: true, body: { approved: true } })).status, 400);
+  assert.equal((await f.request(`/api/videos/${added.body.video.id}`, { method: 'PATCH', parent: true, body: { approved: false } })).status, 200);
+  assert.equal((await f.request('/api/library')).body.videos.length, 0);
   const updated = await f.request(`/api/videos/${added.body.video.id}`, { method: 'PATCH', parent: true, body: { favorite: true, title: 'For later' } });
   assert.equal(updated.body.video.favorite, true);
   const reopened = await createApp({ dataDir: f.dataDir });
@@ -130,7 +131,7 @@ test('URL and image validation blocks unsupported protocols, hosts, and mismatch
   assert.deepEqual(normalizeVideoUrl('https://www.netflix.com/cz-en/title/80049832?source=share'), { source: 'netflix', url: 'https://www.netflix.com/title/80049832' });
 });
 
-test('Netflix watch links retain their playback path for parent-assisted handoffs', async t => {
+test('Netflix selections retain the exact content path and are visible in the child library', async t => {
   const f = await fixture(t);
   await f.setup();
   const playback = 'https://www.netflix.com/watch/80049832';
@@ -141,8 +142,8 @@ test('Netflix watch links retain their playback path for parent-assisted handoff
   const added = await f.request('/api/videos', { method: 'POST', parent: true, body: { title: 'For an iPad handoff', url: playback } });
   assert.equal(added.status, 201);
   assert.equal(added.body.video.url, playback);
-  assert.equal(added.body.video.approved, false);
-  assert.equal((await f.request('/api/library')).body.videos.length, 0);
+  assert.equal(added.body.video.approved, true);
+  assert.equal((await f.request('/api/library')).body.videos.length, 1);
 });
 
 test('metadata only fetches the fixed YouTube endpoint and gracefully handles unavailable details', async t => {
@@ -171,10 +172,10 @@ test('metadata only fetches the fixed YouTube endpoint and gracefully handles un
   const fallback = await offline.request('/api/metadata', { method: 'POST', parent: true, body: { url: 'https://youtu.be/nr5Pj6GQL2o' } });
   assert.equal(fallback.status, 200);
   assert.equal(fallback.body.title, '');
-  assert.match(fallback.body.warning, /manually/);
+  assert.match(fallback.body.warning, /ručne/);
 });
 
-test('only approved uploaded media is visible and playable to children; byte ranges work', async t => {
+test('draft uploaded media stays private and approved files support byte ranges', async t => {
   const f = await fixture(t);
   await f.setup();
   const uploaded = await f.upload();
@@ -243,7 +244,7 @@ test('site access stays optional for local use and becomes required when a PIN i
   const local = await fixture(t, { siteAccessPin: undefined, requireSiteAccess: false });
   assert.deepEqual((await local.request('/api/access')).body, { required: false, authenticated: true });
   assert.equal((await local.request('/api/library')).status, 200);
-  const gated = await fixture(t, { siteAccessPin: '28756319', requireSiteAccess: false });
+  const gated = await fixture(t, { publicChildView: false, siteAccessPin: '28756319', requireSiteAccess: false });
   assert.deepEqual((await gated.request('/api/access')).body, { required: true, authenticated: false });
   assert.equal((await gated.request('/api/library')).status, 401);
 });
@@ -258,13 +259,13 @@ test('required site access fails closed at startup when the deployment PIN is mi
 });
 
 test('a locked public site exposes only access status, health, and the application shell', async t => {
-  const f = await fixture(t, { siteAccessPin: '28756319', requireSiteAccess: true });
+  const f = await fixture(t, { publicChildView: false, siteAccessPin: '28756319', requireSiteAccess: true });
   assert.deepEqual((await f.request('/api/health')).body, { ok: true });
   assert.deepEqual((await f.request('/api/access')).body, { required: true, authenticated: false });
   for (const [path, method] of [
     ['/api/library', 'GET'], ['/media/00000000-0000-0000-0000-000000000000.mp4', 'GET'],
     ['/api/auth/setup', 'POST'], ['/api/auth/login', 'POST'], ['/api/auth/logout', 'POST'],
-    ['/api/metadata', 'POST'], ['/api/uploads', 'POST'], ['/api/discovery/config', 'GET'], ['/api/discovery/search', 'POST'], ['/api/links/analyze', 'POST'], ['/api/videos', 'POST'],
+    ['/api/metadata', 'POST'], ['/api/uploads', 'POST'], ['/api/discovery/config', 'GET'], ['/api/discovery/search', 'POST'], ['/api/links/analyze', 'POST'], ['/api/library/thumbnails', 'POST'], ['/api/videos', 'POST'],
     ['/api/videos/not-real', 'PATCH'], ['/api/videos/not-real', 'DELETE'], ['/api/unknown', 'GET'],
   ]) {
     const result = await f.request(path, { method, ...(method !== 'GET' ? { body: { pin: '123456' } } : {}) });
@@ -296,7 +297,7 @@ test('a locked public site exposes only access status, health, and the applicati
 });
 
 test('site sessions guard approved media, survive parent logout, and full logout invalidates both sessions', async t => {
-  const f = await fixture(t, { siteAccessPin: '28756319', requireSiteAccess: true });
+  const f = await fixture(t, { publicChildView: false, siteAccessPin: '28756319', requireSiteAccess: true });
   await f.unlockSite();
   await f.setup();
   const uploaded = await f.upload({ approved: true });
@@ -332,7 +333,7 @@ test('site sessions guard approved media, survive parent logout, and full logout
 });
 
 test('access PIN guessing is rate limited separately from parent PIN authentication', async t => {
-  const f = await fixture(t, { siteAccessPin: '28756319', requireSiteAccess: true });
+  const f = await fixture(t, { publicChildView: false, siteAccessPin: '28756319', requireSiteAccess: true });
   await f.unlockSite();
   for (let index = 0; index < 8; index += 1) {
     assert.equal((await f.request('/api/access/login', { method: 'POST', body: { pin: '99999999' } })).status, 401);
@@ -346,7 +347,7 @@ test('access PIN guessing is rate limited separately from parent PIN authenticat
 });
 
 test('HTTPS proxy origin and secure cookies work with one explicitly trusted proxy hop', async t => {
-  const f = await fixture(t, { siteAccessPin: '28756319', requireSiteAccess: true, trustProxy: 1, publicOrigin: 'https://nest.example.test/', secureCookies: false });
+  const f = await fixture(t, { publicChildView: false, siteAccessPin: '28756319', requireSiteAccess: true, trustProxy: 1, publicOrigin: 'https://nest.example.test/', secureCookies: false });
   const proxyHeaders = { Origin: 'https://nest.example.test', 'X-Forwarded-Proto': 'https', 'X-Forwarded-For': '198.51.100.10' };
   const login = await f.request('/api/access/login', { method: 'POST', body: { pin: '28756319' }, headers: proxyHeaders });
   assert.equal(login.status, 200);
@@ -396,7 +397,7 @@ test('discovery configuration and missing credentials remain parent-only without
   assert.equal(JSON.stringify(available.body).includes('test-only-key'), false);
 });
 
-test('five provider link analyses save consistent parent references while children see none', async t => {
+test('streaming link analyses save consistent selections visible in the child library', async t => {
   const f = await fixture(t, { discoveryApiKey: '' });
   await f.setup();
   for (const [source, url] of [
@@ -412,10 +413,10 @@ test('five provider link analyses save consistent parent references while childr
     assert.equal(analysis.body.integration.inAppPlaybackImplemented, false);
     const saved = await f.request('/api/videos', { method: 'POST', parent: true, body: { url: analysis.body.url, title: `Reference from ${source}`, source } });
     assert.equal(saved.status, 201, JSON.stringify(saved.body));
-    assert.equal(saved.body.video.approved, false);
+    assert.equal(saved.body.video.approved, true);
   }
   assert.equal((await f.request('/api/library', { parent: true })).body.videos.length, 4);
-  assert.equal((await f.request('/api/library')).body.videos.length, 0);
+  assert.equal((await f.request('/api/library')).body.videos.length, 4);
 });
 
 test('AI search requests have a separate parent-only limit', async t => {
@@ -431,7 +432,7 @@ test('AI search requests have a separate parent-only limit', async t => {
 });
 
 
-test('grounded AI suggestions can be saved through the parent API and disappear after logout', async t => {
+test('an AI suggestion explicitly saved as a draft stays private after logout', async t => {
   let calls = 0;
   const url = 'https://www.netflix.com/title/80049832';
   const f = await fixture(t, { discoveryApiKey: 'test-only-key', fetchImpl: async endpoint => {
@@ -507,7 +508,7 @@ test('a configured parent PIN claims a fresh library and stores only its hash', 
 });
 
 test('rotating both PINs rejects old credentials and preserves family videos and media', async t => {
-  const f = await fixture(t, { siteAccessPin: '28756319', requireSiteAccess: true });
+  const f = await fixture(t, { publicChildView: false, siteAccessPin: '28756319', requireSiteAccess: true });
   await f.unlockSite();
   await f.setup();
   const reference = await f.request('/api/videos', { method: 'POST', parent: true, body: { title: 'A saved family reference', url: 'https://www.netflix.com/watch/81361080' } });
@@ -517,7 +518,7 @@ test('rotating both PINs rejects old credentials and preserves family videos and
   const before = JSON.parse(await readFile(join(f.dataDir, 'library.json'), 'utf8'));
   const mediaPath = join(f.dataDir, 'uploads', uploaded.body.video.mediaUrl.slice('/media/'.length));
   const media = await readFile(mediaPath);
-  const request = await restartedFixture(t, { dataDir: f.dataDir, siteAccessPin: '91482760', requireSiteAccess: true, parentPinOverride: '758304' });
+  const request = await restartedFixture(t, { publicChildView: false, dataDir: f.dataDir, siteAccessPin: '91482760', requireSiteAccess: true, parentPinOverride: '758304' });
   assert.equal((await request('/api/library', { cookie: `${f.siteCookie}; ${f.cookie}` })).status, 401);
   assert.equal((await request('/api/access/login', { body: { pin: '28756319' } })).status, 401);
   const access = await request('/api/access/login', { body: { pin: '91482760' } });
@@ -548,4 +549,226 @@ test('the same parent override does not rewrite data and removing it keeps the r
   assert.equal((await request('/api/auth/login', { body: { pin: '758304' } })).status, 200);
   assert.equal((await request('/api/auth/login', { body: { pin: '123456' } })).status, 401);
   assert.equal(await readFile(storeFile, 'utf8'), before);
+});
+
+test('disconnecting a parent search aborts the provider and leaves later searches usable', { timeout: 10000 }, async t => {
+  const started = Promise.withResolvers();
+  const aborted = Promise.withResolvers();
+  let calls = 0;
+  const f = await fixture(t, { discoveryApiKey: 'test-key-not-live', fetchImpl: async (_url, { signal }) => {
+    calls += 1;
+    if (calls === 1) {
+      started.resolve(signal);
+      return new Promise((_resolve, reject) => signal.addEventListener('abort', () => {
+        aborted.resolve();
+        reject(signal.reason);
+      }, { once: true }));
+    }
+    return { ok: true, json: async () => ({ output_text: JSON.stringify({ summary: '', results: [] }) }) };
+  } });
+  await f.setup();
+  const controller = new AbortController();
+  const body = { query: 'Find a gentle animal story', services: ['youtube'], country: 'CZ' };
+  const pending = fetch(`${f.base}/api/discovery/search`, {
+    method: 'POST', signal: controller.signal,
+    headers: { Cookie: f.cookie, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  const rejected = assert.rejects(pending, { name: 'AbortError' });
+  const providerSignal = await started.promise;
+  // Receiving the complete POST body must not cancel an ordinary pending search.
+  assert.equal(providerSignal.aborted, false);
+  controller.abort();
+  await rejected;
+  let timer;
+  try {
+    await Promise.race([aborted.promise, new Promise((_resolve, reject) => { timer = setTimeout(() => reject(new Error('Provider request was not cancelled')), 3000); })]);
+  } finally { clearTimeout(timer); }
+  assert.equal(providerSignal.aborted, true);
+  const next = await f.request('/api/discovery/search', { method: 'POST', parent: true, body });
+  assert.equal(next.status, 200);
+  assert.deepEqual(next.body.results, []);
+  assert.equal(calls, 2);
+});
+
+test('parent link analysis and saves prefer web images while preserving an explicit cover', async t => {
+  const calls = [];
+  const f = await fixture(t, {
+    fetchImpl: async () => ({ ok: true, json: async () => ({ title: 'Space discoveries', author_name: 'Creator', thumbnail_url: 'https://i.ytimg.com/vi/nr5Pj6GQL2o/hqdefault.jpg' }) }),
+    thumbnailService: { resolve: async (url, details) => { calls.push({ url, details }); return { thumbnail: 'https://images.example.test/poster.jpg', artwork: 'space' }; } },
+  });
+  await f.setup();
+  const imported = await f.request('/api/links/analyze', { method: 'POST', parent: true, body: { url: 'https://youtu.be/nr5Pj6GQL2o' } });
+  assert.equal(imported.status, 200);
+  assert.equal(imported.body.metadata.thumbnail, 'https://i.ytimg.com/vi/nr5Pj6GQL2o/hqdefault.jpg');
+  assert.equal(calls.length, 0, 'Keep an already imported provider thumbnail');
+  const analyzed = await f.request('/api/links/analyze', { method: 'POST', parent: true, body: { url: 'https://www.netflix.com/watch/81361080?trackId=123' } });
+  assert.equal(analyzed.body.metadata.thumbnail, 'https://images.example.test/poster.jpg');
+  assert.equal(analyzed.body.metadata.artwork, 'space');
+  assert.equal(calls[0].url, 'https://www.netflix.com/watch/81361080');
+  const saved = await f.request('/api/videos', { method: 'POST', parent: true, body: { title: 'A space story', url: analyzed.body.url } });
+  assert.equal(saved.status, 201);
+  assert.equal(saved.body.video.thumbnail, 'https://images.example.test/poster.jpg');
+  assert.equal(saved.body.video.artwork, 'space');
+  assert.equal(calls.at(-1).details.title, 'A space story');
+  const chosen = await f.request('/api/videos', { method: 'POST', parent: true, body: { title: 'My cover', url: analyzed.body.url, artwork: 'bears' } });
+  assert.equal(chosen.body.video.artwork, 'bears');
+  const before = calls.length;
+  const ownImage = await f.request('/api/videos', { method: 'POST', parent: true, body: { title: 'My own image', url: analyzed.body.url, thumbnail: 'https://images.example.test/parent.jpg', artwork: 'music' } });
+  assert.equal(ownImage.body.video.thumbnail, 'https://images.example.test/parent.jpg');
+  assert.equal(ownImage.body.video.artwork, 'music');
+  assert.equal(calls.length, before);
+  assert.equal((await f.request('/api/library')).body.videos.length, 3);
+});
+
+test('parent thumbnail backfill limits concurrency and preserves edits, uploads, and deleted records', { timeout: 10000 }, async t => {
+  let backfill = false;
+  let calls = 0;
+  let active = 0;
+  let maxActive = 0;
+  const firstBatch = Promise.withResolvers();
+  const finalItem = Promise.withResolvers();
+  const releases = [];
+  const f = await fixture(t, { thumbnailService: { resolve: async () => {
+    if (!backfill) return { thumbnail: '', artwork: 'forest' };
+    calls += 1;
+    active += 1;
+    maxActive = Math.max(maxActive, active);
+    if (calls === 3) firstBatch.resolve();
+    if (calls === 4) finalItem.resolve();
+    return new Promise(resolve => releases.push(() => { active -= 1; resolve({ thumbnail: 'https://images.example.test/backfill.jpg', artwork: 'space' }); }));
+  } } });
+  await f.setup();
+  const videos = [];
+  for (let index = 0; index < 4; index += 1) {
+    const saved = await f.request('/api/videos', { method: 'POST', parent: true, body: { title: `Story ${index}`, url: `https://www.netflix.com/title/${80049832 + index}` } });
+    assert.equal(saved.status, 201);
+    videos.push(saved.body.video);
+  }
+  const uploaded = await f.upload({ approved: true });
+  assert.equal(uploaded.status, 201);
+  backfill = true;
+  const pending = f.request('/api/library/thumbnails', { method: 'POST', parent: true, body: {} });
+  await firstBatch.promise;
+  assert.equal(active, 3);
+  await f.request(`/api/videos/${videos[0].id}`, { method: 'PATCH', parent: true, body: { thumbnail: 'https://images.example.test/new-parent-image.jpg' } });
+  await f.request(`/api/videos/${videos[1].id}`, { method: 'DELETE', parent: true });
+  await f.request(`/api/videos/${videos[2].id}`, { method: 'PATCH', parent: true, body: { title: 'A different story now' } });
+  await f.request(`/api/videos/${videos[3].id}`, { method: 'PATCH', parent: true, body: { favorite: true } });
+  releases.splice(0).forEach(release => release());
+  await finalItem.promise;
+  releases.splice(0).forEach(release => release());
+  const result = await pending;
+  assert.equal(result.status, 200);
+  assert.equal(result.body.updated, 1);
+  assert.equal(maxActive, 3);
+  assert.equal(calls, 4, 'Uploads never request external thumbnails');
+  const library = (await f.request('/api/library', { parent: true })).body;
+  assert.equal(library.videos.find(video => video.id === videos[0].id).thumbnail, 'https://images.example.test/new-parent-image.jpg');
+  assert.equal(library.videos.some(video => video.id === videos[1].id), false);
+  assert.equal(library.videos.find(video => video.id === videos[2].id).thumbnail, '');
+  const filled = library.videos.find(video => video.id === videos[3].id);
+  assert.equal(filled.thumbnail, 'https://images.example.test/backfill.jpg');
+  assert.equal(filled.artwork, 'space');
+  assert.equal(filled.favorite, true);
+  assert.equal(library.videos.find(video => video.id === uploaded.body.video.id).thumbnail, '');
+});
+
+test('the browser policy permits only the privacy-enhanced YouTube frame host', async t => {
+  const f = await fixture(t);
+  const response = await f.request('/api/health');
+  const policy = response.headers.get('content-security-policy');
+  assert.match(policy, /(?:^|; )frame-src https:\/\/www\.youtube-nocookie\.com;/);
+  assert.match(policy, /object-src 'none'/);
+  assert.match(policy, /frame-ancestors 'none'/);
+  assert.doesNotMatch(policy, /frame-src[^;]*(?:\*|https:\/\/www\.youtube\.com)/);
+});
+
+test('public child view uses only the parent PIN after a protected initial setup', async t => {
+  const f = await fixture(t, { publicChildView: true, siteAccessPin: '28756319', requireSiteAccess: true });
+  const initial = await f.request('/api/library', { site: false });
+  assert.equal(initial.status, 200);
+  assert.equal(initial.body.parent, false);
+  assert.equal(initial.body.pinConfigured, false);
+  assert.equal((await f.request('/api/auth/setup', { method: 'POST', site: false, body: { pin: '123456' } })).status, 401);
+  await f.unlockSite();
+  await f.setup();
+  const selected = await f.request('/api/videos', { method: 'POST', parent: true, site: false, body: { title: 'A selected video', url: 'https://youtu.be/nr5Pj6GQL2o' } });
+  assert.equal(selected.status, 201);
+  assert.equal(selected.body.video.approved, true);
+  const draft = await f.request('/api/videos', { method: 'POST', parent: true, site: false, body: { title: 'A private draft', url: 'https://www.netflix.com/title/80049832', approved: false } });
+  assert.equal(draft.status, 201);
+  const child = await f.request('/api/library', { site: false });
+  assert.deepEqual(child.body.videos.map(video => video.id), [selected.body.video.id]);
+  assert.equal((await f.request('/api/discovery/config', { parent: true, site: false })).status, 200);
+  assert.equal((await f.request('/api/videos', { method: 'POST', site: false, body: { title: 'Unauthorized', url: selected.body.video.url } })).status, 401);
+  await f.request('/api/auth/logout', { method: 'POST', parent: true, site: false });
+  const login = await f.request('/api/auth/login', { method: 'POST', site: false, body: { pin: '123456' } });
+  assert.equal(login.status, 200, 'Parent login does not require a website PIN');
+  const parentCookie = login.headers.get('set-cookie').split(';')[0];
+  const parent = await f.request('/api/library', { site: false, headers: { Cookie: parentCookie } });
+  assert.equal(parent.body.parent, true);
+  assert.equal(parent.body.videos.length, 2);
+});
+
+test('public uploaded media still enforces approval and authenticated parent access', async t => {
+  const f = await fixture(t, { publicChildView: true, siteAccessPin: '28756319', requireSiteAccess: true });
+  await f.unlockSite();
+  await f.setup();
+  const uploaded = await f.upload();
+  const path = uploaded.body.video.mediaUrl;
+  assert.equal((await fetch(`${f.base}${path}`)).status, 404);
+  assert.equal((await fetch(`${f.base}${path}`, { headers: { Cookie: f.cookie } })).status, 200);
+  await f.request(`/api/videos/${uploaded.body.video.id}`, { method: 'PATCH', parent: true, site: false, body: { approved: true } });
+  assert.equal((await fetch(`${f.base}${path}`)).status, 200);
+  assert.equal((await fetch(`${f.base}${path}`, { method: 'HEAD' })).status, 200);
+  await f.request(`/api/videos/${uploaded.body.video.id}`, { method: 'PATCH', parent: true, site: false, body: { approved: false } });
+  assert.equal((await fetch(`${f.base}${path}`)).status, 404);
+});
+
+test('legacy forced-private streaming links migrate once without changing uploaded drafts', async t => {
+  const f = await fixture(t);
+  await f.setup();
+  const saved = await f.request('/api/videos', { method: 'POST', parent: true, body: { title: 'Legacy selection', url: 'https://www.netflix.com/title/80049832', approved: false } });
+  const uploaded = await f.upload();
+  const storeFile = join(f.dataDir, 'library.json');
+  const legacy = JSON.parse(await readFile(storeFile, 'utf8'));
+  delete legacy.streamingApprovalMigrated;
+  await writeFile(storeFile, JSON.stringify(legacy));
+  const request = await restartedFixture(t, { dataDir: f.dataDir, publicChildView: true });
+  const child = await request('/api/library');
+  assert.deepEqual(child.body.videos.map(video => video.id), [saved.body.video.id]);
+  const migrated = JSON.parse(await readFile(storeFile, 'utf8'));
+  assert.equal(migrated.streamingApprovalMigrated, true);
+  assert.equal(migrated.videos.find(video => video.id === uploaded.body.video.id).approved, false);
+  migrated.videos.find(video => video.id === saved.body.video.id).approved = false;
+  await writeFile(storeFile, JSON.stringify(migrated));
+  await createApp({ dataDir: f.dataDir });
+  const reopened = JSON.parse(await readFile(storeFile, 'utf8'));
+  assert.equal(reopened.videos.find(video => video.id === saved.body.video.id).approved, false, 'Migration must not republish later explicit drafts');
+});
+
+test('verified runtime metadata fills analysis, saves, and existing missing durations without replacing parent values', async t => {
+  let duration = 245;
+  const f = await fixture(t, {
+    fetchImpl: async () => ({ ok: true, json: async () => ({ title: 'Space tour', author_name: 'Creator', thumbnail_url: 'https://i.ytimg.com/vi/nr5Pj6GQL2o/hqdefault.jpg' }) }),
+    durationService: { resolve: async url => url.includes('youtube.com') ? duration : null },
+  });
+  await f.setup();
+  const url = 'https://www.youtube.com/watch?v=nr5Pj6GQL2o';
+  const analysis = await f.request('/api/links/analyze', { method: 'POST', parent: true, body: { url } });
+  assert.equal(analysis.body.metadata.durationSeconds, 245);
+  const metadata = await f.request('/api/metadata', { method: 'POST', parent: true, body: { url } });
+  assert.equal(metadata.body.duration, 245);
+  const saved = await f.request('/api/videos', { method: 'POST', parent: true, body: { title: 'Space tour', url } });
+  assert.equal(saved.body.video.duration, 245);
+  const manual = await f.request('/api/videos', { method: 'POST', parent: true, body: { title: 'My selected duration', url, duration: 120 } });
+  assert.equal(manual.body.video.duration, 120);
+  await f.request(`/api/videos/${saved.body.video.id}`, { method: 'PATCH', parent: true, body: { duration: null, thumbnail: 'https://images.example.test/existing.jpg' } });
+  duration = 300;
+  const filled = await f.request('/api/library/thumbnails', { method: 'POST', parent: true, body: {} });
+  assert.equal(filled.body.updated, 1);
+  const library = (await f.request('/api/library', { parent: true })).body;
+  assert.equal(library.videos.find(video => video.id === saved.body.video.id).duration, 300);
+  assert.equal(library.videos.find(video => video.id === saved.body.video.id).thumbnail, 'https://images.example.test/existing.jpg');
+  assert.equal(library.videos.find(video => video.id === manual.body.video.id).duration, 120);
 });

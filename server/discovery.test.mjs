@@ -4,6 +4,8 @@ import { createDiscoveryService, DiscoveryError } from './discovery.mjs';
 
 const youtube = 'https://www.youtube.com/watch?v=nr5Pj6GQL2o';
 const netflix = 'https://www.netflix.com/title/80049832';
+const noDurations = { resolve: async () => null };
+const noThumbnails = { resolve: async () => ({ thumbnail: '', artwork: 'forest' }) };
 const query = { query: 'Gentle animal stories', services: ['youtube', 'netflix'], country: 'CZ' };
 function candidate(url, title = 'A video suggestion', extra = {}) {
   return { title, url, description: 'An AI suggested description to review.', reason: 'Might fit the parent request.', ...extra };
@@ -18,12 +20,12 @@ function completion(candidates = [candidate(youtube)], sources = [youtube], anno
   };
 }
 function serviceFor(data, fetchOptions = {}) {
-  return createDiscoveryService({ apiKey: 'test-key-not-live', fetchImpl: async () => ({ ok: true, json: async () => data, ...fetchOptions }) });
+  return createDiscoveryService({ durationService: noDurations, thumbnailService: noThumbnails, apiKey: 'test-key-not-live', fetchImpl: async () => ({ ok: true, json: async () => data, ...fetchOptions }) });
 }
 
 test('AI config exposes only status, model and supported services; an absent key makes no network call', async () => {
   let calls = 0;
-  const service = createDiscoveryService({ apiKey: '  ', model: 'sk-secret-value', fetchImpl: async () => { calls += 1; } });
+  const service = createDiscoveryService({ durationService: noDurations, thumbnailService: noThumbnails, apiKey: '  ', model: 'sk-secret-value', fetchImpl: async () => { calls += 1; } });
   assert.deepEqual(service.config(), {
     configured: false, model: 'gpt-5-mini', defaultCountry: 'CZ',
     services: [{ id: 'youtube', name: 'YouTube' }, { id: 'netflix', name: 'Netflix' }, { id: 'disney', name: 'Disney+' }, { id: 'prime', name: 'Prime Video' }, { id: 'max', name: 'HBO Max' }],
@@ -35,7 +37,7 @@ test('AI config exposes only status, model and supported services; an absent key
 
 test('AI requests are bounded and send selected official domains with Czech country hint', async () => {
   let recorded;
-  const service = createDiscoveryService({ apiKey: '  test-key-not-live  ', model: 'gpt-5-mini', fetchImpl: async (url, options) => {
+  const service = createDiscoveryService({ durationService: noDurations, thumbnailService: noThumbnails, apiKey: '  test-key-not-live  ', model: 'gpt-5-mini', fetchImpl: async (url, options) => {
     recorded = { url, options, body: JSON.parse(options.body) };
     return { ok: true, json: async () => completion() };
   } });
@@ -65,7 +67,7 @@ test('AI requests are bounded and send selected official domains with Czech coun
 
 test('invalid queries, service choices and country formats fail before contacting an AI provider', async () => {
   let calls = 0;
-  const service = createDiscoveryService({ apiKey: 'test-key-not-live', fetchImpl: async () => { calls += 1; } });
+  const service = createDiscoveryService({ durationService: noDurations, thumbnailService: noThumbnails, apiKey: 'test-key-not-live', fetchImpl: async () => { calls += 1; } });
   const invalid = [
     null, {}, [], { ...query, query: 'ab' }, { ...query, query: 'x'.repeat(1001) }, { ...query, query: 'video\u0000title' },
     { ...query, services: [] }, { ...query, services: ['youtube', 'youtube'] }, { ...query, services: ['other'] },
@@ -144,18 +146,150 @@ test('results are bounded and do not use invented runtime or price fields', asyn
 
 test('provider rejection, malformed responses and transport errors never expose upstream details', async () => {
   for (const [status, expected] of [[401, 503], [403, 503], [429, 503], [500, 502]]) {
-    const service = createDiscoveryService({ apiKey: 'test-key-not-live', fetchImpl: async () => ({ ok: false, status, json: async () => { throw new Error('Do not read secret upstream body'); } }) });
+    const service = createDiscoveryService({ durationService: noDurations, thumbnailService: noThumbnails, apiKey: 'test-key-not-live', fetchImpl: async () => ({ ok: false, status, json: async () => { throw new Error('Do not read secret upstream body'); } }) });
     await assert.rejects(service.search(query), error => error instanceof DiscoveryError && error.status === expected && !/secret|test-key/.test(error.message));
   }
   for (const payload of [{ status: 'incomplete' }, { error: { message: 'secret upstream text' } }, { output_text: 'not json' }, { output_text: '{"results":[]}' }]) {
     await assert.rejects(serviceFor(payload).search(query), error => error instanceof DiscoveryError && error.status === 502 && !error.message.includes('secret'));
   }
   for (const [name, expected] of [['TimeoutError', 504], ['AbortError', 504], ['Error', 502]]) {
-    const service = createDiscoveryService({ apiKey: 'test-key-not-live', fetchImpl: async () => {
+    const service = createDiscoveryService({ durationService: noDurations, thumbnailService: noThumbnails, apiKey: 'test-key-not-live', fetchImpl: async () => {
       const error = new Error('secret upstream text test-key-not-live');
       error.name = name;
       throw error;
     } });
     await assert.rejects(service.search(query), error => error instanceof DiscoveryError && error.status === expected && !/secret|test-key/.test(error.message));
   }
+});
+
+test('an already stopped search never contacts the AI provider', async () => {
+  const controller = new AbortController();
+  controller.abort();
+  let calls = 0;
+  const service = createDiscoveryService({ durationService: noDurations, thumbnailService: noThumbnails, apiKey: 'test-key-not-live', fetchImpl: async () => { calls += 1; } });
+  await assert.rejects(service.search(query, { signal: controller.signal }), { name: 'AbortError' });
+  assert.equal(calls, 0);
+});
+
+test('stopping a search aborts its provider request without turning cancellation into a timeout', async () => {
+  const controller = new AbortController();
+  let providerSignal;
+  const service = createDiscoveryService({ durationService: noDurations, thumbnailService: noThumbnails, apiKey: 'test-key-not-live', fetchImpl: async (_url, { signal }) => {
+    providerSignal = signal;
+    return new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+  } });
+  const pending = service.search(query, { signal: controller.signal });
+  const rejected = assert.rejects(pending, error => error.name === 'AbortError' && !(error instanceof DiscoveryError));
+  assert.equal(providerSignal.aborted, false);
+  controller.abort();
+  assert.equal(providerSignal.aborted, true);
+  await rejected;
+});
+
+test('late provider responses and bodies are discarded after cancellation even if transport ignores abort', async () => {
+  for (const phase of ['request', 'body']) {
+    const controller = new AbortController();
+    const started = Promise.withResolvers();
+    const late = Promise.withResolvers();
+    let bodyRead = false;
+    let outputRead = false;
+    const payload = { get output_text() { outputRead = true; return JSON.stringify({ summary: '', results: [] }); } };
+    const response = { ok: true, json: async () => {
+      bodyRead = true;
+      if (phase === 'body') { started.resolve(); return late.promise; }
+      return payload;
+    } };
+    const service = createDiscoveryService({ durationService: noDurations, thumbnailService: noThumbnails, apiKey: 'test-key-not-live', fetchImpl: async () => {
+      if (phase === 'request') { started.resolve(); return late.promise; }
+      return response;
+    } });
+    const pending = service.search(query, { signal: controller.signal });
+    const rejected = assert.rejects(pending, { name: 'AbortError' });
+    await started.promise;
+    controller.abort();
+    late.resolve(phase === 'request' ? response : payload);
+    await rejected;
+    assert.equal(outputRead, false, `Cancelled ${phase} must not parse a result`);
+    assert.equal(bodyRead, phase === 'body', 'A cancelled request must not begin reading its body');
+  }
+});
+
+test('only grounded suggestions receive web thumbnails and thematic fallback artwork', async () => {
+  const calls = [];
+  const service = createDiscoveryService({ durationService: noDurations,
+    apiKey: 'test-key-not-live',
+    fetchImpl: async () => ({ ok: true, json: async () => completion([candidate(youtube, 'Space discoveries'), candidate(netflix, 'A story'), candidate('https://www.netflix.com/title/99999999', 'Invented')], [youtube, netflix]) }),
+    thumbnailService: { resolve: async (url, options) => {
+      calls.push({ url, options });
+      return { thumbnail: url === youtube ? 'https://i.ytimg.com/vi/nr5Pj6GQL2o/hqdefault.jpg' : '', artwork: url === youtube ? 'space' : 'stories' };
+    } },
+  });
+  const result = await service.search(query);
+  assert.equal(result.results.length, 2);
+  assert.deepEqual(calls.map(call => call.url), [youtube, netflix]);
+  assert.equal(calls[0].options.title, 'Space discoveries');
+  assert.ok(calls[0].options.signal instanceof AbortSignal);
+  assert.equal(result.results[0].thumbnail, 'https://i.ytimg.com/vi/nr5Pj6GQL2o/hqdefault.jpg');
+  assert.equal(result.results[0].artwork, 'space');
+  assert.equal(result.results[1].thumbnail, '');
+  assert.equal(result.results[1].artwork, 'stories');
+});
+
+test('thumbnail enrichment limits concurrent work and stops remaining images when search is cancelled', async () => {
+  const links = Array.from({ length: 5 }, (_, index) => `https://www.netflix.com/title/${80049832 + index}`);
+  const controller = new AbortController();
+  const started = Promise.withResolvers();
+  let calls = 0;
+  let active = 0;
+  let maxActive = 0;
+  const signals = [];
+  const service = createDiscoveryService({ durationService: noDurations,
+    apiKey: 'test-key-not-live',
+    fetchImpl: async () => ({ ok: true, json: async () => completion(links.map(url => candidate(url)), links) }),
+    thumbnailService: { resolve: async (_url, { signal }) => {
+      signals.push(signal);
+      calls += 1;
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      if (calls === 3) started.resolve();
+      return new Promise((_resolve, reject) => signal.addEventListener('abort', () => { active -= 1; reject(signal.reason); }, { once: true }));
+    } },
+  });
+  const pending = service.search(query, { signal: controller.signal });
+  const rejected = assert.rejects(pending, { name: 'AbortError' });
+  await started.promise;
+  controller.abort();
+  await rejected;
+  assert.equal(calls, 3);
+  assert.equal(maxActive, 3);
+  assert.equal(active, 0);
+  assert.ok(signals.every(signal => signal.aborted));
+});
+
+test('verified durations enrich suggestions without using model-generated lengths', async () => {
+  const service = createDiscoveryService({
+    apiKey: 'test-key-not-live', thumbnailService: noThumbnails,
+    durationService: { resolve: async url => url === youtube ? 245 : null },
+    fetchImpl: async () => ({ ok: true, json: async () => completion([candidate(youtube, 'Space tour', { durationSeconds: 999 }), candidate(netflix, 'A story', { durationSeconds: 123 })], [youtube, netflix]) }),
+  });
+  const result = await service.search(query);
+  assert.equal(result.results[0].durationSeconds, 245);
+  assert.equal(result.results[1].durationSeconds, null);
+});
+
+test('optional previews do not discard a completed answer when its earlier AI timeout expires', async t => {
+  const timer = new AbortController();
+  t.mock.method(AbortSignal, 'timeout', () => timer.signal);
+  const service = createDiscoveryService({
+    apiKey: 'test-key-not-live', durationService: noDurations,
+    thumbnailService: { resolve: async (_url, { signal }) => {
+      timer.abort(new DOMException('AI timer expired after completion', 'TimeoutError'));
+      assert.equal(signal.aborted, false);
+      return { thumbnail: '', artwork: 'space' };
+    } },
+    fetchImpl: async () => ({ ok: true, json: async () => completion() }),
+  });
+  const result = await service.search(query);
+  assert.equal(result.results.length, 1);
+  assert.equal(result.results[0].artwork, 'space');
 });

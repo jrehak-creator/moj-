@@ -120,8 +120,8 @@ export async function analyzeVideoLink(input, { fetchImpl = globalThis.fetch } =
     originUrl: null, fetchedAt: null,
   };
   const warnings = [
-    'Recognizing this link does not verify Czech availability, your subscription, a price, or playback permission.',
-    'A content identifier does not contain the runtime. Nest cannot infer episode length, skip an intro, or detect playback ending from this link.',
+    'Rozpoznanie odkazu nepotvrdzuje dostupnosť v Česku, predplatné ani cenu.',
+    'Samotný identifikátor neobsahuje dĺžku. Nest ju hľadá v metadátach; ak chýba, doplňte ju pred uložením.',
   ];
 
   if (link.source === 'youtube') {
@@ -139,18 +139,18 @@ export async function analyzeVideoLink(input, { fetchImpl = globalThis.fetch } =
         originUrl: link.url, fetchedAt: new Date().toISOString(),
       });
     } catch {
-      warnings.push('Public YouTube metadata could not be retrieved. Enter the title and other details manually.');
+      warnings.push('Verejné údaje YouTube sa nepodarilo načítať. Názov môžete doplniť ručne.');
     }
-    warnings.push('YouTube has an official embedded player API. Nest has not implemented that player; ads and navigation limitations still apply.');
+    warnings.push('YouTube sa prehráva priamo v Nest. Jeho prehrávač môže obsahovať reklamy, odporúčania a odkazy na ďalší obsah.');
   } else {
-    warnings.push(`${link.providerName} metadata requires a licensed catalog integration or manual entry. Enter the title, thumbnail, and runtime yourself.`);
-    warnings.push('This link is a parent reference. Nest has no provider player integration or control over this service’s app.');
+    warnings.push(`${link.providerName} nemusí sprístupniť všetky údaje verejne. Chýbajúci názov a trvanie doplňte ručne.`);
+    warnings.push('Táto služba zatiaľ nemá prehrávač v Nest. Uloženie titulu neumožní spustiť video v našom prehrávači.');
   }
 
   return {
     ...link,
     metadata,
-    integration: { providerPlayerApi: link.source === 'youtube', inAppPlaybackImplemented: false, durationAvailable: metadata.durationSeconds !== null },
+    integration: { providerPlayerApi: link.source === 'youtube', inAppPlaybackImplemented: link.source === 'youtube', durationAvailable: metadata.durationSeconds !== null },
     warnings,
   };
 }

@@ -7,6 +7,9 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { normalizeVideoUrl, analyzeVideoLink } from './providers.mjs';
 import { createDiscoveryService, DiscoveryError } from './discovery.mjs';
+import { createThumbnailService } from './thumbnails.mjs';
+import { createDurationService } from './durations.mjs';
+import { coverArtworkFor } from '../shared/covers.mjs';
 
 export { normalizeVideoUrl } from './providers.mjs';
 
@@ -52,7 +55,6 @@ function videoFields(body, previous = null) {
     identity = normalizeVideoUrl(merged.url);
     if (body.source !== undefined && body.source !== identity.source) fail('The selected service does not match the link.');
     if (body.mediaUrl !== undefined) fail('Upload a video file to add local media.');
-    if (merged.approved === true) fail('External links are parent references. Only uploaded videos can appear in the child library.');
   }
   const title = textField(merged.title, 'Title', 200, { required: true });
   if (!title) fail('A title is required.');
@@ -75,7 +77,7 @@ function videoFields(body, previous = null) {
     tags: [...new Set(tags.map(tag => tag.trim()))],
     thumbnail: thumbnailUrl(merged.thumbnail),
     artwork,
-    approved: identity.source === 'upload' && (merged.approved ?? false),
+    approved: merged.approved ?? identity.source !== 'upload',
     favorite: merged.favorite ?? false,
   };
 }
@@ -127,14 +129,27 @@ export async function createApp({
   distDir = resolve(here, '../dist'),
   siteAccessPin = process.env.SITE_ACCESS_PIN,
   requireSiteAccess = process.env.REQUIRE_SITE_ACCESS === 'true',
+  publicChildView = process.env.PUBLIC_CHILD_VIEW !== 'false',
   parentPinOverride = process.env.PARENT_PIN_OVERRIDE,
   publicOrigin = process.env.PUBLIC_ORIGIN || process.env.RENDER_EXTERNAL_URL,
   trustProxy = process.env.TRUST_PROXY === '1' ? 1 : false,
   secureCookies = process.env.SESSION_COOKIE_SECURE === 'true',
   discoveryApiKey = process.env.NEST_AI_API_KEY || '',
   discoveryModel = process.env.NEST_AI_MODEL || 'gpt-5-mini',
+  thumbnailService,
+  durationService,
 } = {}) {
-  const discovery = createDiscoveryService({ apiKey: discoveryApiKey, model: discoveryModel, fetchImpl });
+  const thumbnails = thumbnailService ?? createThumbnailService({ fetchImpl });
+  const durations = durationService ?? createDurationService({ fetchImpl });
+  const discovery = createDiscoveryService({ apiKey: discoveryApiKey, model: discoveryModel, fetchImpl, thumbnailService: thumbnails, durationService: durations });
+  async function coverFor(video) {
+    try { return await thumbnails.resolve(video.url, { title: video.title, description: video.description }); }
+    catch { return { thumbnail: '', artwork: coverArtworkFor(video) }; }
+  }
+  async function durationFor(url) {
+    try { return await durations.resolve(url); }
+    catch { return null; }
+  }
   const accessRequired = requireSiteAccess || siteAccessPin !== undefined;
   if (accessRequired && (typeof siteAccessPin !== 'string' || !/^\d{8,12}$/.test(siteAccessPin))) {
     throw new Error('Site access requires SITE_ACCESS_PIN to contain 8–12 digits. Configure it securely before starting the server.');
@@ -161,7 +176,7 @@ export async function createApp({
     if (state.version !== 1 || !Array.isArray(state.videos) || typeof state.demo !== 'boolean') throw new Error('Invalid library format');
   } catch (error) {
     if (error.code !== 'ENOENT') throw new Error('The saved library could not be read. Preserve .data/library.json and restore a valid backup before starting.', { cause: error });
-    state = { version: 1, pin: null, demo: true, videos: samples() };
+    state = { version: 1, pin: null, demo: true, streamingApprovalMigrated: true, videos: samples() };
     await writeFile(storeFile, JSON.stringify(state, null, 2), { mode: 0o600, flag: 'wx' });
   }
 
@@ -184,6 +199,15 @@ export async function createApp({
     });
     writeQueue = operation.catch(() => {});
     return operation;
+  }
+
+  // Older releases forced streaming links into parent-only storage. Publish those
+  // existing selections once; future explicit drafts must remain private.
+  if (state.streamingApprovalMigrated !== true) {
+    await update(next => {
+      if (!next.demo) for (const video of next.videos) if (video.source !== 'upload') video.approved = true;
+      next.streamingApprovalMigrated = true;
+    });
   }
 
   // Recovery is controlled by the server owner, never by a public reset endpoint.
@@ -215,7 +239,7 @@ export async function createApp({
     res.set('X-Content-Type-Options', 'nosniff');
     res.set('Referrer-Policy', 'no-referrer');
     res.set('X-Frame-Options', 'DENY');
-    res.set('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https:; media-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'");
+    res.set('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https:; media-src 'self'; frame-src https://www.youtube-nocookie.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'");
     if (req.path.startsWith('/api/') || req.path.startsWith('/media/') || req.accepts('html')) res.set('Cache-Control', 'no-store');
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && req.get('origin')) {
       let origin;
@@ -291,13 +315,18 @@ export async function createApp({
     res.json({ required: accessRequired, authenticated: !accessRequired });
   });
   app.use(['/api', '/media'], (req, res, next) => {
+    const readOnly = ['GET', 'HEAD'].includes(req.method);
+    const publicLibrary = req.baseUrl === '/api' && req.path === '/library' && readOnly;
+    const publicMedia = req.baseUrl === '/media' && readOnly;
+    const parentSession = req.baseUrl === '/api' && ['/auth/login', '/auth/logout'].includes(req.path) && req.method === 'POST';
+    if (publicChildView && (publicLibrary || publicMedia || parentSession || req.isParent)) return next();
     if (!req.hasSiteAccess) return res.status(401).json({ error: 'Enter your site access PIN to open this library.' });
     next();
   });
   app.use(express.json({ limit: '32kb' }));
 
   app.get('/api/library', (req, res) => res.json({
-    videos: req.isParent || state.demo ? state.videos : state.videos.filter(video => video.source === 'upload' && video.approved),
+    videos: req.isParent ? state.videos : state.videos.filter(video => video.approved),
     demo: state.demo, pinConfigured: Boolean(state.pin), parent: req.isParent,
   }));
 
@@ -331,10 +360,29 @@ export async function createApp({
 
   app.get('/api/discovery/config', parentOnly, (_req, res) => res.json(discovery.config()));
   app.post('/api/discovery/search', parentOnly, discoveryAttemptLimit, async (req, res) => {
-    res.json(await discovery.search(req.body ?? {}));
+    const controller = new AbortController();
+    // A completed POST body also closes req; watch the response connection instead.
+    const cancel = () => { if (!res.writableEnded) controller.abort(); };
+    res.once('close', cancel);
+    if (res.destroyed) controller.abort();
+    try {
+      const result = await discovery.search(req.body ?? {}, { signal: controller.signal });
+      if (!controller.signal.aborted && !res.destroyed) res.json(result);
+    } catch (error) {
+      if (!controller.signal.aborted && !res.destroyed) throw error;
+    } finally {
+      res.off('close', cancel);
+    }
   });
   app.post('/api/links/analyze', parentOnly, async (req, res) => {
-    res.json(await analyzeVideoLink(req.body?.url, { fetchImpl }));
+    const result = await analyzeVideoLink(req.body?.url, { fetchImpl });
+    const details = result.metadata;
+    const [cover, durationSeconds] = await Promise.all([
+      details.thumbnail ? { thumbnail: details.thumbnail, artwork: coverArtworkFor(details) }
+        : coverFor({ url: result.url, title: details.title, description: details.description }),
+      details.durationSeconds ?? durationFor(result.url),
+    ]);
+    res.json({ ...result, metadata: { ...details, ...cover, durationSeconds }, integration: { ...result.integration, durationAvailable: durationSeconds !== null } });
   });
   // Keep the original editor endpoint compatible with the shared provider adapters.
   app.post('/api/metadata', parentOnly, async (req, res) => {
@@ -342,14 +390,71 @@ export async function createApp({
     const details = result.metadata;
     res.json({ source: result.source, url: result.url, title: details.title,
       description: details.description, creator: details.creator, thumbnail: details.thumbnail,
-      duration: details.durationSeconds, warning: result.warnings.join(' ') });
+      duration: details.durationSeconds ?? await durationFor(result.url), warning: result.warnings.join(' ') });
   });
 
   app.post('/api/videos', parentOnly, async (req, res) => {
     const fields = videoFields(req.body);
+    if (fields.source !== 'upload') {
+      const [cover, duration] = await Promise.all([
+        fields.thumbnail ? null : coverFor(fields),
+        fields.duration ?? durationFor(fields.url),
+      ]);
+      if (cover) {
+        fields.thumbnail = thumbnailUrl(cover.thumbnail);
+        if (req.body.artwork === undefined) fields.artwork = cover.artwork;
+      }
+      fields.duration = duration;
+    }
     const video = { ...fields, id: randomUUID(), createdAt: new Date().toISOString() };
     await update(next => next.videos.unshift(video));
     res.status(201).json({ video });
+  });
+  app.post('/api/library/thumbnails', parentOnly, async (_req, res) => {
+    const missing = state.demo ? [] : state.videos.filter(video => video.source !== 'upload' && (!video.thumbnail || video.duration == null));
+    let cursor = 0;
+    const covers = new Map();
+    await Promise.all(Array.from({ length: Math.min(3, missing.length) }, async () => {
+      while (cursor < missing.length) {
+        const video = missing[cursor++];
+        const [cover, duration] = await Promise.all([
+          video.thumbnail ? { thumbnail: video.thumbnail, artwork: video.artwork } : coverFor(video),
+          video.duration ?? durationFor(video.url),
+        ]);
+        covers.set(video.id, { ...cover, duration });
+      }
+    }));
+    const changed = missing.filter(video => {
+      const cover = covers.get(video.id);
+      return (!video.thumbnail && (cover.thumbnail || cover.artwork !== video.artwork)) || (video.duration == null && cover.duration != null);
+    });
+    if (!changed.length) return res.json({ updated: 0 });
+    const updated = await update(next => {
+      let count = 0;
+      for (const original of changed) {
+        const current = next.videos.find(video => video.id === original.id);
+        // Preserve newer parent edits and references removed while images were loading.
+        if (!current || current.source === 'upload' || current.url !== original.url || current.title !== original.title || current.description !== original.description) continue;
+        const cover = covers.get(original.id);
+        let changed = false;
+        if (!current.thumbnail && !original.thumbnail) {
+          const thumbnail = thumbnailUrl(cover.thumbnail);
+          const artwork = current.artwork === original.artwork ? cover.artwork : current.artwork;
+          if (thumbnail || artwork !== current.artwork) {
+            current.thumbnail = thumbnail;
+            current.artwork = artwork;
+            changed = true;
+          }
+        }
+        if (current.duration == null && original.duration == null && cover.duration != null) {
+          current.duration = cover.duration;
+          changed = true;
+        }
+        if (changed) count += 1;
+      }
+      return count;
+    });
+    res.json({ updated });
   });
   app.patch('/api/videos/:id', parentOnly, async (req, res) => {
     let video;

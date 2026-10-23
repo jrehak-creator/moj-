@@ -11,13 +11,14 @@ export interface LinkAnalysis {
     description: string;
     creator: string;
     thumbnail: string;
+    artwork?: string;
     durationSeconds: number | null;
     originUrl: string | null;
     fetchedAt: string | null;
   };
   integration: {
     providerPlayerApi: boolean;
-    inAppPlaybackImplemented: false;
+    inAppPlaybackImplemented: boolean;
     durationAvailable: boolean;
   };
   warnings: string[];
@@ -31,6 +32,7 @@ export interface DiscoveryResult {
   reason: string;
   url: string;
   thumbnail: string;
+  artwork?: string;
   durationSeconds: number | null;
   availability: 'not-verified';
   price: null;

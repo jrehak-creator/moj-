@@ -1,83 +1,73 @@
 # Open Nest on your iPad with a hosted web address
 
-This guide uses Render to run the app at an HTTPS address reachable from Safari. Your GitHub repository can stay private. Publishing the cloud development environment does not host the website.
+Nest's default homepage is the child library. It opens without a website PIN. Approved video cards and approved uploaded media are public to anyone who can reach the site; parent search, edits, drafts, and unapproved media require the parent session. **Rodičovský režim** asks for a **6–12 digit parent PIN**. **Detský režim** signs out parent controls.
 
-The default deployment requests Render's **free** plan for a short test, with no paid disk. Availability depends on your account and Render's current rules; review the dashboard before confirming. This is a deployment recipe, not an already-live website, and its live schema and current pricing have not been verified here.
+This guide uses Render for an HTTPS address that Safari can reach. Your GitHub repository can stay private. Publishing the cloud development environment does not host the website. The service may still be named **nest-ipad-pilot**, but the old iPad experiment is no longer a page or navigation item in Nest.
 
-**This temporary setup can lose all server-side test data**, including saved titles, uploads, and the parent PIN, when the service restarts, redeploys, or replaces its filesystem. It may sleep while idle and take time to wake up. The website access PIN remains in Render's environment settings. Observation reports are stored separately in the iPad's Safari storage; use **Export JSON** to keep a copy. Do not use this short trial as your permanent family library.
+The default deployment requests Render's **free** plan with no paid disk. Availability and pricing depend on Render and your account. This temporary filesystem can lose saved titles, uploaded files, and hashed parent credentials when the service restarts, redeploys, or replaces its instance. Environment settings remain in Render. Use a persistent configuration before relying on the library for permanent storage.
 
-## 1. Connect your repository
+## 1. Connect the repository
 
-1. On your Mac, open [Render](https://dashboard.render.com/) and sign in or create an account. Signing in with GitHub can simplify the next step.
-2. Select **New → Blueprint**. Labels can change; look for the option to deploy from a repository's `render.yaml` file.
-3. Connect GitHub if requested. Grant Render access to **jrehak-creator/moj-**; you do not need to make the repository public or grant access to unrelated repositories.
-4. Choose that repository and its **main** branch. The `render.yaml` file must already be committed and pushed to this branch.
-5. Continue to the deployment review screen. Render should propose a service named **nest-ipad-pilot**, a **free** service plan, and **no disk**.
+1. On your Mac, open [Render](https://dashboard.render.com/) and sign in.
+2. Select **New → Blueprint** and connect GitHub if requested. Grant access to **jrehak-creator/moj-**.
+3. Choose the repository's **main** branch, with the current `render.yaml` committed and pushed.
+4. Review the proposed **nest-ipad-pilot** web service. The default recipe requests the **free** plan and **no disk**. Review any paid option before purchasing it.
 
-## 2. Set the website access PIN and deploy
+## 2. Set private deployment values
 
-1. Confirm that the service uses the **free** plan with **no disk**. If the dashboard asks you to choose a paid plan, do not confirm a purchase just to run this trial; first review the options and your account's free-service eligibility.
-2. When Render asks for **SITE_ACCESS_PIN**, enter a randomly chosen **8–12 digit PIN** in its secure environment-variable field. Keep it in your password manager. Do not put it in a GitHub file, URL, test note, or chat message.
-3. Leave **REQUIRE_SITE_ACCESS=true**, **SESSION_COOKIE_SECURE=true**, **TRUST_PROXY=1**, and **DATA_DIR=.data** as prepared. Render supplies `PORT` and `RENDER_EXTERNAL_URL` automatically; you do not need to enter them.
-4. Select Render's deploy/apply button after reviewing the settings. Wait until the service reports that it is live. The build installs dependencies and creates the browser app, then starts the server.
-5. Open the service's HTTPS web address from its dashboard, typically ending in **.onrender.com**. Copy this actual address; `localhost` and the cloud workspace's private address will not work on your iPad.
+1. Set **`SITE_ACCESS_PIN`** privately to **8–12 digits**. This retained value protects the first library claim and legacy administrative access; it is not a child homepage password.
+2. Add **`PARENT_PIN_OVERRIDE`** privately with your chosen **6–12 digit parent PIN**. This configures parent access before the first visitor can claim the library. Use a different value from the initial-claim PIN.
+3. Keep **`REQUIRE_SITE_ACCESS=true`**, **`SESSION_COOKIE_SECURE=true`**, **`TRUST_PROXY=1`**, and **`DATA_DIR=.data`** as prepared. Render supplies `PORT` and `RENDER_EXTERNAL_URL`.
+4. Deploy and wait until Render reports **Live**. The build installs dependencies and creates the app, then starts the server.
+5. Copy the actual HTTPS address from Render's dashboard. The current test service is [Nest](https://nest-ipad-pilot.onrender.com/). A localhost address or private cloud container address will not work on the iPad.
 
-The server refuses to start with a missing or invalid access PIN when `REQUIRE_SITE_ACCESS=true`. Do not turn off that setting to bypass a deployment error.
+The server still validates the required `SITE_ACCESS_PIN` at startup. Do not remove it or disable protection to bypass a deployment error. With a configured parent PIN, normal browsing and parent login do not require entering it. If you do not preconfigure `PARENT_PIN_OVERRIDE`, complete the protected initial library claim yourself before sharing the address.
 
-## 3. Open it on the iPad
+Private keys belong in Render's environment fields, never in GitHub, URLs, or chat. Optional **`NEST_AI_API_KEY`** enables AI search. Optional **`YOUTUBE_API_KEY`** provides another source for verified YouTube duration metadata. Read the [parent guide](PARENT-DISCOVERY.md) for setup and billing limits.
 
-1. Open **Safari** on the iPad and enter the Render HTTPS address.
-2. At the website access screen, enter the **8–12 digit access PIN** you saved in Render, then tap **Open our Nest**.
-3. Tap **Create parent PIN**. Choose and confirm a separate **6–12 digit parent PIN**. This claims the library and removes the example collection. There is no email recovery for this parent PIN.
-4. Enter a short Netflix movie or episode name and its Netflix link. You can copy a link from Netflix's Share feature; a parent must still verify the exact episode after opening it.
-5. Follow the [iPad test guide](IPAD-TEST.md), starting with **Prepare**, before giving the iPad to a child.
-6. To put Nest on the iPad Home Screen, use Safari's **Share → Add to Home Screen**. This shortcut does not enable Guided Access or restrict Netflix.
+## 3. Open and check Nest on the iPad
 
-The website access PIN opens this hosted site. The separate parent PIN protects library changes. Neither PIN locks the iPad or controls Netflix; Guided Access is configured on the iPad and started and ended by the parent. Netflix still requires its own app/subscription where applicable.
+1. Open the HTTPS address in Safari. The child library should appear directly, with no website PIN prompt.
+2. Select **Rodičovský režim** and enter the parent PIN configured in Render.
+3. Open **Vyhľadať videá**, search YouTube or use **Pridať odkaz**, and review a video. Select **Uložiť do detskej knižnice**. Add its actual duration if prompted.
+4. Select **Detský režim**, refresh, and confirm that the approved selection is visible while editing controls are locked. An unapproved draft must stay out of child view.
+5. Try the same address in a Private Browsing tab. Approved cards should remain visible; parent actions should still require the parent PIN.
+6. To add Nest to the Home Screen, use Safari's **Share → Add to Home Screen**. This does not lock the device or restrict an embedded provider player.
 
-## 4. Check the hosted site before sharing its address
+Start with YouTube because it has an embedded player. Netflix, Disney+, Prime Video, and HBO Max need a provider-supported integration before they can play inside Nest; the app does not send the child into those services. YouTube can still show ads and navigation within its player, so it remains parent-only. Children can see approved streaming cards; child playback currently uses approved uploaded files. Preview the actual video on the actual iPad before relying on its playback behavior.
 
-1. In a Safari Private Browsing tab, open the HTTPS address again. It should ask for the website access PIN before displaying library information.
-2. Try one incorrect access PIN and confirm that it is rejected. Enter the correct PIN afterward.
-3. Add a test title while in parent mode. Use **Lock parent controls**, reload, and confirm that changes require the parent PIN again.
-4. Treat every title and parent PIN in this free trial as disposable. If the library resets, sign in with the website access PIN again, create a new parent PIN, and add the short test title again. Export your observation report before clearing Safari's website data or changing the site's address.
-5. Keep your test supervised. Hosted web checks do not establish that Netflix autoplay, touch restriction, or the end of a video behaves correctly on the physical iPad.
+The login endpoints limit repeated PIN attempts. If temporarily locked out, wait for the retry period rather than continuing to guess. The parent PIN protects changes and private records, not the browser or device itself.
 
-The login endpoints limit repeated PIN attempts. If locked out after multiple failures, wait for the displayed retry period instead of repeatedly retrying.
+## PIN recovery
 
-## Reset both PINs
-
-After the latest code is deployed, both PINs can be changed from Render without knowing the old values:
+The parent PIN can be reset without knowing its old value:
 
 1. Open [Render](https://dashboard.render.com/), select **nest-ipad-pilot**, then **Environment → Edit**.
-2. Change **`SITE_ACCESS_PIN`** to your new website PIN: **8–12 digits**. Keep **`REQUIRE_SITE_ACCESS=true`**.
-3. Add **`PARENT_PIN_OVERRIDE`** and enter a different new parent PIN: **6–12 digits**. If the variable already exists, edit its value.
-4. Save the changes and choose the option that redeploys the service. Wait for **Live**. If automatic deployment is disabled, deploy the latest commit from **main**.
-5. Open [Nest](https://nest-ipad-pilot.onrender.com/) in Safari, preferably in a new Private Browsing tab. Enter the new website PIN, tap **Parent access**, and enter the new parent PIN. On `/discover`, use **Enter parent space** instead. You do not need to create the parent PIN again.
+2. Add or change **`PARENT_PIN_OVERRIDE`** to a new **6–12 digit PIN**.
+3. Save and redeploy. If automatic deployment is disabled, deploy the latest commit from **main**. Wait for **Live**.
+4. Open Nest, select **Rodičovský režim**, and enter the new parent PIN. The child homepage still has no website PIN prompt.
 
-Enter these values only in Render's private environment fields. Do not send them in chat or put them in GitHub. Restarting signs out existing website and parent sessions, and the old PINs stop working.
+The override replaces the saved parent credential at startup and preserves existing family records and uploaded files. Only illustrative samples are removed when claiming a fresh library. The saved credential is a salted hash, and an invalid override prevents startup. Restarting signs out old sessions.
 
-`PARENT_PIN_OVERRIDE` is applied before the server accepts requests. It replaces the saved parent credential while preserving existing family video records and uploaded files; only the illustrative sample collection is removed for a fresh library. The parent credential is stored as a salted hash. An invalid override prevents startup instead of opening an unprotected library.
+Leave the override configured if you want that parent PIN reapplied across fresh free-trial starts. Removing it keeps the last saved PIN only while the library data survives. Changing the override does not make temporary storage persistent.
 
-You can leave the override configured to keep the parent PIN consistent across free-trial redeployments. Change it in Render whenever you want a new parent PIN. Removing the setting keeps the last saved PIN if the library data survives; leaving it configured reapplies that value on future starts.
-
-The **free Render filesystem can still reset during a deployment**, independently of PIN recovery. This recovery feature does not make temporary library storage persistent. The new PIN values remain in Render's environment settings.
+To change the separate initial-claim/legacy administration PIN, edit **`SITE_ACCESS_PIN`** privately in Render to contain **8–12 digits** and redeploy. It is separate from ordinary parent login. Older instructions titled “Reset both PINs” referred to a website-wide gate that the current child homepage no longer uses.
 
 ## If deployment fails
 
-- **Repository not visible:** check Render's GitHub connection and grant access to this repository.
-- **Missing `render.yaml`:** the latest app and deployment files need to be pushed to `main` first.
-- **Build fails:** read the Render build log. The expected command is `npm ci --include=dev && npm run build`, using Node.js 24 from `.node-version`.
-- **Invalid access PIN:** correct `SITE_ACCESS_PIN` in Render's environment settings to contain 8–12 digits, then redeploy/restart as prompted. Do not paste its value into support messages.
-- **PIN form rejects every request:** use the exact HTTPS address Render provides. A custom domain needs `PUBLIC_ORIGIN` set to that domain's origin, with no path, followed by a restart.
-- **Changes disappear:** the default free trial has temporary storage, so a reset is possible. Recreate the parent PIN and test title as needed. The optional persistent version below is for keeping a library.
+- **Repository missing:** check Render's GitHub connection and repository access.
+- **Build fails:** read the build log. The expected command is `npm ci --include=dev && npm run build`, using Node.js 24 from `.node-version`.
+- **Invalid PIN setting:** `SITE_ACCESS_PIN` needs 8–12 digits; a configured `PARENT_PIN_OVERRIDE` needs 6–12 digits. Correct the private value and redeploy without sharing it in support messages.
+- **Parent login fails:** use the parent PIN, then check the configured override or recover it as above. The child homepage does not ask for the initial-claim PIN.
+- **Mutation requests fail:** use the exact HTTPS address provided by Render. A custom domain needs `PUBLIC_ORIGIN` set to its origin, with no path, followed by a restart.
+- **Library disappeared:** free trial storage is temporary. Environment values can restore a configured parent PIN but cannot restore missing videos. Permanent storage requires the separate configuration below.
 
-To stop the trial, use Render's dashboard to delete the service. No paid resource purchase is required by the default configuration.
+To stop the trial, delete the service in Render's dashboard.
 
-## Optional: keep a permanent library later
+## Optional permanent storage
 
-The alternative [render.persistent.yaml](../render.persistent.yaml) uses a paid `starter` service with a **1 GB persistent disk**, `DATA_DIR=/var/data/nest`, and the same required website access PIN. It is not used automatically. Review Render's current service and disk charges before choosing it.
+The alternative [render.persistent.yaml](../render.persistent.yaml) uses a paid `starter` service with a **1 GB persistent disk**, `DATA_DIR=/var/data/nest`, and the retained deployment settings. It is not selected automatically. Review Render's current service and disk charges before choosing it.
 
-A maintainer can prepare a separate Git branch with `render.persistent.yaml` copied over `render.yaml`, commit and push that branch, then choose it in the Blueprint flow. This makes the paid configuration explicit at review time without changing the default free trial. Do not deploy both versions under the assumption that they share data; moving temporary trial data into a persistent service requires a separate migration.
+A maintainer can prepare a separate branch with `render.persistent.yaml` copied over `render.yaml`, commit and push it, then select that branch in the Blueprint flow. Do not assume separate deployments share data; moving temporary trial data requires a separate migration.
 
-After deploying the persistent version, restart its service once and verify that the saved title and parent PIN survive. Keep one service instance and one server process, back up the library if it matters, and remember that deleting the persistent disk deletes its saved library and uploads. Review and remove any paid resources you no longer want in Render's dashboard.
+After deployment, restart the service and verify that saved titles and the parent PIN survive. Keep one service instance and one server process, and back up the library if it matters. Deleting the persistent disk deletes its library records and uploads.

@@ -15,3 +15,10 @@
 .discover-result-meta,.discover-evidence a,.discover-analysis dt,.discover-canonical{font-size:11px}
 .discover-analysis dd,.discover-setup p,.discover-setup details{font-size:12px}
 @media(max-width:520px){.discover-header nav button{font-size:0}.discover-heading>p{font-size:12px}.discover-services label{font-size:11px}.discover-header nav a{font-size:11px}}
+.discover-query>.discover-stop-search{color:#8a4e3f;border:1px solid #d9bfb2;background:#fff7ef}
+.discover-search-stopped{padding:16px 18px;margin-top:18px;border:1px solid #dce6d2;border-radius:9px;background:#eff4e8;color:#536f46;font-size:13px;line-height:1.7}
+.discover-result-content>.discover-watch{margin-top:auto;margin-bottom:10px}
+.discover-result-content>.discover-watch+.button{margin-top:0}
+.discover-duration-field{display:flex;flex-direction:column;gap:9px;margin-top:20px;color:#607750;font-size:13px;max-width:300px}
+.discover-duration-field input{font-size:16px;padding:11px;border:1px solid #dce5d2;background:#fafbf5;border-radius:8px;min-height:44px;color:#426040}
+.discover-services small{font-size:10px;color:#79826f;margin-left:3px}

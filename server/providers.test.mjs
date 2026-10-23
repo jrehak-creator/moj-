@@ -122,8 +122,8 @@ test('paid-provider analysis uses manual metadata without contacting or scraping
     const analysis = await analyzeVideoLink(url, { fetchImpl: () => { assert.fail('Paid services must not be scraped'); } });
     assert.deepEqual(analysis.metadata, { status: 'manual', title: '', description: '', creator: '', thumbnail: '', durationSeconds: null, originUrl: null, fetchedAt: null });
     assert.deepEqual(analysis.integration, { providerPlayerApi: false, inAppPlaybackImplemented: false, durationAvailable: false });
-    assert.ok(analysis.warnings.some(warning => warning.includes('Czech availability')));
-    assert.ok(analysis.warnings.some(warning => warning.includes('identifier does not contain the runtime')));
+    assert.ok(analysis.warnings.some(warning => warning.includes('dostupnosť v Česku')));
+    assert.ok(analysis.warnings.some(warning => warning.includes('identifikátor neobsahuje dĺžku')));
   }
 });
 
@@ -147,7 +147,7 @@ test('YouTube metadata fetch uses one fixed HTTPS oEmbed endpoint and imports bo
   assert.equal(analysis.metadata.originUrl, analysis.url);
   assert.ok(!Number.isNaN(Date.parse(analysis.metadata.fetchedAt)));
   assert.equal(analysis.metadata.durationSeconds, null);
-  assert.deepEqual(analysis.integration, { providerPlayerApi: true, inAppPlaybackImplemented: false, durationAvailable: false });
+  assert.deepEqual(analysis.integration, { providerPlayerApi: true, inAppPlaybackImplemented: true, durationAvailable: false });
 });
 
 test('bad YouTube responses fall back without inventing metadata or rejecting the link', async () => {
@@ -161,7 +161,7 @@ test('bad YouTube responses fall back without inventing metadata or rejecting th
     const result = await analyzeVideoLink(`https://youtu.be/${videoId}`, { fetchImpl });
     assert.equal(result.contentId, videoId);
     assert.deepEqual(result.metadata, { status: 'unavailable', title: '', description: '', creator: '', thumbnail: '', durationSeconds: null, originUrl: null, fetchedAt: null });
-    assert.ok(result.warnings.some(warning => warning.includes('manually')));
+    assert.ok(result.warnings.some(warning => warning.includes('ručne')));
   }
 });
 
