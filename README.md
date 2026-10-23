@@ -27,7 +27,7 @@ To open it on an iPad, the server must be reachable from that iPad. On your own 
 
 ## Data and parent controls
 
-The prototype uses one shared family library on one server. The existing library supports a 6–12 digit parent PIN, with server-side authentication for parent actions. First-time PIN creation claims the shared library; do this yourself before giving others access. Keep the PIN private and return to child mode after editing. There is no email PIN recovery.
+The prototype uses one shared family library on one server. The existing library supports a 6–12 digit parent PIN, with server-side authentication for parent actions. First-time PIN creation claims the shared library; do this yourself before giving others access. Keep the PIN private and return to child mode after editing. There is no email PIN recovery. The server owner can reset both PINs privately through Render; see [Reset both PINs](docs/PUBLIC-HOSTING.md#reset-both-pins).
 
 Library data, PIN credentials, and uploaded media persist under `.data/` by default; `DATA_DIR` can select another writable directory. Keep this directory private and back it up if the data matters. Restarting the server may require signing in again. The parent PIN protects library changes; it does not lock Safari, Netflix, or the iPad. Use a trusted household network or an appropriately secured host.
 

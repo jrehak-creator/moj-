@@ -45,6 +45,24 @@ The website access PIN opens this hosted site. The separate parent PIN protects 
 
 The login endpoints limit repeated PIN attempts. If locked out after multiple failures, wait for the displayed retry period instead of repeatedly retrying.
 
+## Reset both PINs
+
+After the latest code is deployed, both PINs can be changed from Render without knowing the old values:
+
+1. Open [Render](https://dashboard.render.com/), select **nest-ipad-pilot**, then **Environment → Edit**.
+2. Change **`SITE_ACCESS_PIN`** to your new website PIN: **8–12 digits**. Keep **`REQUIRE_SITE_ACCESS=true`**.
+3. Add **`PARENT_PIN_OVERRIDE`** and enter a different new parent PIN: **6–12 digits**. If the variable already exists, edit its value.
+4. Save the changes and choose the option that redeploys the service. Wait for **Live**. If automatic deployment is disabled, deploy the latest commit from **main**.
+5. Open [Nest](https://nest-ipad-pilot.onrender.com/) in Safari, preferably in a new Private Browsing tab. Enter the new website PIN, tap **Parent access**, and enter the new parent PIN. On `/discover`, use **Enter parent space** instead. You do not need to create the parent PIN again.
+
+Enter these values only in Render's private environment fields. Do not send them in chat or put them in GitHub. Restarting signs out existing website and parent sessions, and the old PINs stop working.
+
+`PARENT_PIN_OVERRIDE` is applied before the server accepts requests. It replaces the saved parent credential while preserving existing family video records and uploaded files; only the illustrative sample collection is removed for a fresh library. The parent credential is stored as a salted hash. An invalid override prevents startup instead of opening an unprotected library.
+
+You can leave the override configured to keep the parent PIN consistent across free-trial redeployments. Change it in Render whenever you want a new parent PIN. Removing the setting keeps the last saved PIN if the library data survives; leaving it configured reapplies that value on future starts.
+
+The **free Render filesystem can still reset during a deployment**, independently of PIN recovery. This recovery feature does not make temporary library storage persistent. The new PIN values remain in Render's environment settings.
+
 ## If deployment fails
 
 - **Repository not visible:** check Render's GitHub connection and grant access to this repository.

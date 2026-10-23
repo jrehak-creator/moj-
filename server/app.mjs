@@ -127,6 +127,7 @@ export async function createApp({
   distDir = resolve(here, '../dist'),
   siteAccessPin = process.env.SITE_ACCESS_PIN,
   requireSiteAccess = process.env.REQUIRE_SITE_ACCESS === 'true',
+  parentPinOverride = process.env.PARENT_PIN_OVERRIDE,
   publicOrigin = process.env.PUBLIC_ORIGIN || process.env.RENDER_EXTERNAL_URL,
   trustProxy = process.env.TRUST_PROXY === '1' ? 1 : false,
   secureCookies = process.env.SESSION_COOKIE_SECURE === 'true',
@@ -137,6 +138,9 @@ export async function createApp({
   const accessRequired = requireSiteAccess || siteAccessPin !== undefined;
   if (accessRequired && (typeof siteAccessPin !== 'string' || !/^\d{8,12}$/.test(siteAccessPin))) {
     throw new Error('Site access requires SITE_ACCESS_PIN to contain 8–12 digits. Configure it securely before starting the server.');
+  }
+  if (parentPinOverride !== undefined && (typeof parentPinOverride !== 'string' || !/^\d{6,12}$/.test(parentPinOverride))) {
+    throw new Error('PARENT_PIN_OVERRIDE must contain 6–12 digits. Configure it securely or remove the setting before starting the server.');
   }
   if (trustProxy !== false && trustProxy !== 1) throw new Error('Proxy trust must be disabled or limited to exactly one proxy hop.');
   if (publicOrigin) {
@@ -180,6 +184,23 @@ export async function createApp({
     });
     writeQueue = operation.catch(() => {});
     return operation;
+  }
+
+  // Recovery is controlled by the server owner, never by a public reset endpoint.
+  // Keep real library data intact, and avoid rewriting the hash on every restart.
+  if (parentPinOverride !== undefined) {
+    let matches = false;
+    if (state.pin) {
+      const candidate = await hashPin(parentPinOverride, state.pin.salt);
+      matches = timingSafeEqual(Buffer.from(candidate.hash, 'hex'), Buffer.from(state.pin.hash, 'hex'));
+    }
+    if (!matches) {
+      const credentials = await hashPin(parentPinOverride);
+      await update(next => {
+        next.pin = credentials;
+        if (next.demo) { next.demo = false; next.videos = []; }
+      });
+    }
   }
 
   const app = express();

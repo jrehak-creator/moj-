@@ -459,3 +459,93 @@ test('grounded AI suggestions can be saved through the parent API and disappear 
   assert.equal((await f.request('/api/library', { parent: true })).body.videos.length, 0);
   assert.equal((await f.request('/api/discovery/config', { parent: true })).status, 401);
 });
+
+async function restartedFixture(t, options) {
+  const app = await createApp(options);
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+  });
+  return async (path, { body, cookie = '' } = {}) => {
+    const response = await fetch(`${base}${path}`, {
+      method: body ? 'POST' : 'GET',
+      headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...(cookie ? { Cookie: cookie } : {}) },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+    return { status: response.status, headers: response.headers, body: await response.json() };
+  };
+}
+
+test('invalid parent PIN overrides fail before creating or changing library data', async t => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'nest-invalid-recovery-'));
+  t.after(() => rm(dataDir, { recursive: true, force: true }));
+  for (const parentPinOverride of ['', '12345', '1234567890123', 'abcdef', '123456\n', 123456, null]) {
+    await assert.rejects(createApp({ dataDir, parentPinOverride }), /PARENT_PIN_OVERRIDE must contain 6–12 digits/);
+  }
+  await assert.rejects(readFile(join(dataDir, 'library.json')), { code: 'ENOENT' });
+  const f = await fixture(t);
+  await f.setup();
+  const before = await readFile(join(f.dataDir, 'library.json'), 'utf8');
+  await assert.rejects(createApp({ dataDir: f.dataDir, parentPinOverride: 'invalid' }), /PARENT_PIN_OVERRIDE/);
+  assert.equal(await readFile(join(f.dataDir, 'library.json'), 'utf8'), before);
+});
+
+test('a configured parent PIN claims a fresh library and stores only its hash', async t => {
+  const f = await fixture(t, { parentPinOverride: '004872' });
+  const library = await f.request('/api/library');
+  assert.equal(library.body.pinConfigured, true);
+  assert.equal(library.body.demo, false);
+  assert.deepEqual(library.body.videos, []);
+  assert.equal((await f.request('/api/auth/setup', { method: 'POST', body: { pin: '123456' } })).status, 409);
+  assert.equal((await f.request('/api/auth/login', { method: 'POST', body: { pin: '004872' } })).status, 200);
+  const saved = JSON.parse(await readFile(join(f.dataDir, 'library.json'), 'utf8'));
+  assert.ok(saved.pin.hash && saved.pin.salt);
+  assert.equal(JSON.stringify(saved).includes('004872'), false);
+});
+
+test('rotating both PINs rejects old credentials and preserves family videos and media', async t => {
+  const f = await fixture(t, { siteAccessPin: '28756319', requireSiteAccess: true });
+  await f.unlockSite();
+  await f.setup();
+  const reference = await f.request('/api/videos', { method: 'POST', parent: true, body: { title: 'A saved family reference', url: 'https://www.netflix.com/watch/81361080' } });
+  assert.equal(reference.status, 201);
+  const uploaded = await f.upload({ approved: true });
+  assert.equal(uploaded.status, 201);
+  const before = JSON.parse(await readFile(join(f.dataDir, 'library.json'), 'utf8'));
+  const mediaPath = join(f.dataDir, 'uploads', uploaded.body.video.mediaUrl.slice('/media/'.length));
+  const media = await readFile(mediaPath);
+  const request = await restartedFixture(t, { dataDir: f.dataDir, siteAccessPin: '91482760', requireSiteAccess: true, parentPinOverride: '758304' });
+  assert.equal((await request('/api/library', { cookie: `${f.siteCookie}; ${f.cookie}` })).status, 401);
+  assert.equal((await request('/api/access/login', { body: { pin: '28756319' } })).status, 401);
+  const access = await request('/api/access/login', { body: { pin: '91482760' } });
+  assert.equal(access.status, 200);
+  const siteCookie = access.headers.get('set-cookie').split(';')[0];
+  assert.equal((await request('/api/library', { cookie: `${siteCookie}; ${f.cookie}` })).body.parent, false);
+  assert.equal((await request('/api/auth/login', { cookie: siteCookie, body: { pin: '123456' } })).status, 401);
+  const login = await request('/api/auth/login', { cookie: siteCookie, body: { pin: '758304' } });
+  assert.equal(login.status, 200);
+  const cookie = `${siteCookie}; ${login.headers.get('set-cookie').split(';')[0]}`;
+  assert.deepEqual((await request('/api/library', { cookie })).body.videos, before.videos);
+  const after = JSON.parse(await readFile(join(f.dataDir, 'library.json'), 'utf8'));
+  assert.deepEqual(after.videos, before.videos);
+  assert.notDeepEqual(after.pin, before.pin);
+  assert.equal(after.demo, false);
+  assert.deepEqual(await readFile(mediaPath), media);
+  assert.equal(JSON.stringify(after).includes('758304'), false);
+  assert.equal(JSON.stringify(after).includes('91482760'), false);
+});
+
+test('the same parent override does not rewrite data and removing it keeps the recovered PIN', async t => {
+  const f = await fixture(t, { parentPinOverride: '758304' });
+  const storeFile = join(f.dataDir, 'library.json');
+  const before = await readFile(storeFile, 'utf8');
+  await createApp({ dataDir: f.dataDir, parentPinOverride: '758304' });
+  assert.equal(await readFile(storeFile, 'utf8'), before);
+  const request = await restartedFixture(t, { dataDir: f.dataDir, parentPinOverride: undefined });
+  assert.equal((await request('/api/auth/login', { body: { pin: '758304' } })).status, 200);
+  assert.equal((await request('/api/auth/login', { body: { pin: '123456' } })).status, 401);
+  assert.equal(await readFile(storeFile, 'utf8'), before);
+});
